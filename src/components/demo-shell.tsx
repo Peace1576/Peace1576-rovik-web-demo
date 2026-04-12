@@ -57,10 +57,10 @@ function getSpeechProfile() {
 
   if (isIOS || (isMobile && isWebKitOnly)) {
     return {
-      wakeSupported: false,
+      wakeSupported: true,
       commandContinuous: false,
       wakeCompatibilityMessage:
-        "Wake mode is not reliable on this browser. Use the mic button for one command at a time.",
+        "Wake mode is experimental on this browser. If it misses the wake word, use the mic button for one command at a time.",
     } satisfies SpeechProfile;
   }
 
@@ -437,9 +437,7 @@ export function DemoShell() {
         event.error === "language-not-supported"
       ) {
         wakeModeEnabledRef.current = false;
-        wakeSupportedRef.current = false;
         setWakeModeEnabled(false);
-        setWakeSupported(false);
         setWakeState("off");
         setDemoStateValue(responseRef.current ? "ready" : "idle");
         setErrorMessage(null);
@@ -631,6 +629,17 @@ export function DemoShell() {
             void startWakeListening({ skipPermissionCheck: true });
           }, wakeRestartMs);
         }
+        return;
+      }
+
+      if (event.error === "not-allowed") {
+        clearInactivityTimer();
+        commandRecognitionRef.current = null;
+        commandLaunchPendingRef.current = false;
+        setDemoStateValue("unsupported");
+        setErrorMessage(
+          "Speech recognition is not available in this browser session right now. Use typed input or try Chrome or Edge.",
+        );
         return;
       }
 
@@ -886,7 +895,7 @@ export function DemoShell() {
             <button
               type="button"
               onClick={handleWakeToggle}
-              disabled={!speechSupported || !wakeSupported || demoState === "processing"}
+              disabled={!speechSupported || demoState === "processing"}
               className="inline-flex items-center justify-center rounded-full border border-[rgba(57,219,194,0.22)] bg-[rgba(57,219,194,0.08)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[rgba(177,245,232,0.92)] transition duration-200 hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-45"
             >
               {wakeToggleLabel(wakeState, wakeModeEnabled, wakeSupported)}
