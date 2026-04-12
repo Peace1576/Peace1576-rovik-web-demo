@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { askRovik } from "@/lib/ai";
+import { askRovik, RovikServiceError } from "@/lib/ai";
 import type { AskRovikRequest, DemoMode } from "@/lib/demo-types";
 
 const validModes = new Set<DemoMode>([
@@ -34,11 +34,16 @@ export async function POST(request: Request) {
 
     return NextResponse.json(response);
   } catch (error) {
-    const message =
-      error instanceof Error
-        ? error.message
-        : "Rovik could not complete the request.";
+    if (error instanceof RovikServiceError) {
+      return NextResponse.json(
+        { error: error.message },
+        { status: error.statusCode },
+      );
+    }
 
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json(
+      { error: "Rovik could not complete the request." },
+      { status: 500 },
+    );
   }
 }

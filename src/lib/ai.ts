@@ -3,6 +3,16 @@ import type { AskRovikRequest, AskRovikResponse, DemoMode } from "@/lib/demo-typ
 
 const DEFAULT_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
 
+export class RovikServiceError extends Error {
+  statusCode: number;
+
+  constructor(message: string, statusCode = 500) {
+    super(message);
+    this.name = "RovikServiceError";
+    this.statusCode = statusCode;
+  }
+}
+
 const systemInstruction = `You are Rovik, a proactive AI assistant.
 You help users manage tasks, research information, draft responses, and plan actions.
 Be clear, concise, and action-oriented.
@@ -17,6 +27,8 @@ Return valid JSON only with this exact shape:
 }
 Rules:
 - Always include summary, recommendedAction, and mode.
+- Write summary as the direct response shown to the user. Do not describe the user's prompt from a third-person perspective.
+- For greetings or simple conversational input, answer naturally and briefly as Rovik.
 - Use short arrays for nextSteps and actionSuggestions when helpful.
 - Include draft only when the request would benefit from wording the user can reuse.
 - Do not wrap JSON in markdown fences.
@@ -59,6 +71,36 @@ function extractJson(text: string) {
   throw new Error("Gemini returned a non-JSON response.");
 }
 
+function normalizeProviderError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+
+  if (/503|UNAVAILABLE|overloaded|high demand/i.test(message)) {
+    return new RovikServiceError(
+      "Rovik is temporarily busy right now. Please try again in a moment.",
+      503,
+    );
+  }
+
+  if (/429|RESOURCE_EXHAUSTED|quota|rate limit/i.test(message)) {
+    return new RovikServiceError(
+      "Rovik is handling too many requests right now. Please try again shortly.",
+      429,
+    );
+  }
+
+  if (/API key|credential|permission/i.test(message)) {
+    return new RovikServiceError(
+      "The AI service is not configured correctly right now.",
+      500,
+    );
+  }
+
+  return new RovikServiceError(
+    "Rovik hit a temporary issue while generating a response. Please try again.",
+    500,
+  );
+}
+
 function normalizeResponse(
   payload: Partial<AskRovikResponse>,
   fallbackMode: DemoMode,
@@ -94,46 +136,51 @@ export async function askRovik(
   const apiKey = getApiKey();
 
   if (!apiKey) {
-    throw new Error(
+    throw new RovikServiceError(
       "Missing Gemini API key. Set GOOGLE_API_KEY or GEMINI_API_KEY.",
+      500,
     );
   }
 
-  const ai = new GoogleGenAI({ apiKey });
+  try {
+    const ai = new GoogleGenAI({ apiKey });
 
-  const response = await ai.models.generateContent({
-    model: DEFAULT_MODEL,
-    contents: [
-      {
-        role: "user",
-        parts: [
-          {
-            text: [
-              `Mode: ${input.mode}`,
-              `Input source: ${input.source}`,
-              buildModeInstruction(input.mode),
-              "",
-              "User transcript:",
-              input.transcript.trim(),
-            ].join("\n"),
-          },
-        ],
+    const response = await ai.models.generateContent({
+      model: DEFAULT_MODEL,
+      contents: [
+        {
+          role: "user",
+          parts: [
+            {
+              text: [
+                `Mode: ${input.mode}`,
+                `Input source: ${input.source}`,
+                buildModeInstruction(input.mode),
+                "",
+                "User transcript:",
+                input.transcript.trim(),
+              ].join("\n"),
+            },
+          ],
+        },
+      ],
+      config: {
+        systemInstruction,
+        temperature: 0.6,
+        responseMimeType: "application/json",
       },
-    ],
-    config: {
-      systemInstruction,
-      temperature: 0.6,
-      responseMimeType: "application/json",
-    },
-  });
+    });
 
-  const rawText = response.text ?? "";
-  const parsed = JSON.parse(extractJson(rawText)) as Partial<AskRovikResponse>;
-  const normalized = normalizeResponse(parsed, input.mode);
+    const rawText = response.text ?? "";
+    const parsed = JSON.parse(extractJson(rawText)) as Partial<AskRovikResponse>;
+    const normalized = normalizeResponse(parsed, input.mode);
 
-  if (!normalized.summary || !normalized.recommendedAction) {
-    throw new Error("Gemini response was missing required fields.");
+    if (!normalized.summary || !normalized.recommendedAction) {
+      throw new Error("Gemini response was missing required fields.");
+    }
+
+    return normalized;
+  } catch (error) {
+    throw normalizeProviderError(error);
   }
-
-  return normalized;
 }
