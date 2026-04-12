@@ -1,4 +1,10 @@
-import type { ExamplePrompt, LandingCard, LandingMetric } from "@/lib/demo-types";
+import type {
+  ExamplePrompt,
+  LandingCard,
+  LandingMetric,
+  PersonalityOption,
+  RovikPersonality,
+} from "@/lib/demo-types";
 
 export const DEMO_BROWSER_HINT =
   process.env.NEXT_PUBLIC_DEMO_BROWSER_HINT ??
@@ -61,6 +67,43 @@ export const landingUseCases = [
   "Plan the day ahead",
   "Research a topic fast",
 ] as const;
+
+export const defaultPersonality: RovikPersonality = "professional";
+
+export const personalityOptions: PersonalityOption[] = [
+  {
+    id: "professional",
+    title: "Professional",
+    description: "Clear, calm, and efficient for work-focused tasks.",
+    example:
+      "Your inbox contains three priority messages. I’ve drafted replies for each.",
+  },
+  {
+    id: "friendly",
+    title: "Friendly",
+    description: "Warm and conversational for everyday assistance.",
+    example:
+      "Looks like you’ve got a busy day! I can help organize your tasks.",
+  },
+  {
+    id: "minimalist",
+    title: "Minimalist",
+    description: "Very short replies for power users who want only essentials.",
+    example: "3 priority emails. Draft ready.",
+  },
+  {
+    id: "coach",
+    title: "Coach",
+    description: "Motivating and action-oriented for momentum and focus.",
+    example: "You’ve got two important tasks today. Let’s tackle them first.",
+  },
+  {
+    id: "researcher",
+    title: "Researcher",
+    description: "Analytical and informative for deeper comparisons and learning.",
+    example: "I found three strong options. Here’s a comparison.",
+  },
+];
 
 export const rovikCopy = {
   name: "ROVIK",

@@ -1,5 +1,10 @@
 import { GoogleGenAI } from "@google/genai";
-import type { AskRovikRequest, AskRovikResponse, DemoMode } from "@/lib/demo-types";
+import type {
+  AskRovikRequest,
+  AskRovikResponse,
+  DemoMode,
+  RovikPersonality,
+} from "@/lib/demo-types";
 
 const DEFAULT_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
 
@@ -32,7 +37,8 @@ Rules:
 - Use short arrays for nextSteps and actionSuggestions when helpful.
 - Include draft only when the request would benefit from wording the user can reuse.
 - Do not wrap JSON in markdown fences.
-- Match the requested mode unless the request is obviously better treated as "general".`;
+- Match the requested mode unless the request is obviously better treated as "general".
+- Match the requested personality in tone, pacing, and wording.`;
 
 function getApiKey() {
   return process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY;
@@ -52,6 +58,48 @@ function buildModeInstruction(mode: DemoMode) {
   }
 
   return "Handle the request as a general proactive assistant task.";
+}
+
+function buildPersonalityInstruction(personality: RovikPersonality) {
+  if (personality === "professional") {
+    return [
+      "Professional mode.",
+      "Be clear, calm, efficient, and business-like.",
+      "Prefer structured, concise wording.",
+      "Avoid casual filler.",
+    ].join(" ");
+  }
+
+  if (personality === "friendly") {
+    return [
+      "Friendly mode.",
+      "Be warm, conversational, and easy to follow.",
+      "Use encouraging language without sounding informal to the point of being sloppy.",
+    ].join(" ");
+  }
+
+  if (personality === "minimalist") {
+    return [
+      "Minimalist mode.",
+      "Keep the response extremely concise.",
+      "Use only the key information needed to move the user forward.",
+      "Avoid extra commentary.",
+    ].join(" ");
+  }
+
+  if (personality === "coach") {
+    return [
+      "Coach mode.",
+      "Be motivating, helpful, and action-oriented.",
+      "Encourage progress and suggest the next productive move.",
+    ].join(" ");
+  }
+
+  return [
+    "Researcher mode.",
+    "Be analytical, informative, and structured.",
+    "Explain tradeoffs clearly and favor precise comparisons.",
+  ].join(" ");
 }
 
 function extractJson(text: string) {
@@ -154,8 +202,10 @@ export async function askRovik(
             {
               text: [
                 `Mode: ${input.mode}`,
+                `Personality: ${input.personality}`,
                 `Input source: ${input.source}`,
                 buildModeInstruction(input.mode),
+                buildPersonalityInstruction(input.personality),
                 "",
                 "User transcript:",
                 input.transcript.trim(),

@@ -1,5 +1,12 @@
 export type DemoMode = "email" | "planning" | "research" | "general";
 
+export type RovikPersonality =
+  | "professional"
+  | "friendly"
+  | "minimalist"
+  | "coach"
+  | "researcher";
+
 export type DemoState =
   | "idle"
   | "listening"
@@ -20,6 +27,7 @@ export type RovikExpression =
 export type AskRovikRequest = {
   transcript: string;
   mode: DemoMode;
+  personality: RovikPersonality;
   source: "voice" | "typed";
 };
 
@@ -46,4 +54,11 @@ export type LandingCard = {
 export type LandingMetric = {
   label: string;
   value: string;
+};
+
+export type PersonalityOption = {
+  id: RovikPersonality;
+  title: string;
+  description: string;
+  example: string;
 };

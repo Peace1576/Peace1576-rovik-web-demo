@@ -1,12 +1,24 @@
 import { NextResponse } from "next/server";
 import { askRovik, RovikServiceError } from "@/lib/ai";
-import type { AskRovikRequest, DemoMode } from "@/lib/demo-types";
+import type {
+  AskRovikRequest,
+  DemoMode,
+  RovikPersonality,
+} from "@/lib/demo-types";
 
 const validModes = new Set<DemoMode>([
   "email",
   "planning",
   "research",
   "general",
+]);
+
+const validPersonalities = new Set<RovikPersonality>([
+  "professional",
+  "friendly",
+  "minimalist",
+  "coach",
+  "researcher",
 ]);
 
 export async function POST(request: Request) {
@@ -17,6 +29,11 @@ export async function POST(request: Request) {
       typeof body.mode === "string" && validModes.has(body.mode as DemoMode)
         ? (body.mode as DemoMode)
         : "general";
+    const personality =
+      typeof body.personality === "string" &&
+      validPersonalities.has(body.personality as RovikPersonality)
+        ? (body.personality as RovikPersonality)
+        : "professional";
     const source = body.source === "voice" ? "voice" : "typed";
 
     if (!transcript) {
@@ -29,6 +46,7 @@ export async function POST(request: Request) {
     const response = await askRovik({
       transcript,
       mode,
+      personality,
       source,
     });
 

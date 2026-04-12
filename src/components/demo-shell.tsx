@@ -6,16 +6,24 @@ import {
   useRef,
   useState,
 } from "react";
-import { demoPrompts, DEMO_BROWSER_HINT, rovikCopy } from "@/lib/demo-content";
+import {
+  defaultPersonality,
+  demoPrompts,
+  DEMO_BROWSER_HINT,
+  personalityOptions,
+  rovikCopy,
+} from "@/lib/demo-content";
 import type {
   AskRovikResponse,
   DemoMode,
   DemoState,
   ExamplePrompt,
+  RovikPersonality,
   RovikExpression,
 } from "@/lib/demo-types";
 import { ExamplePrompts } from "@/components/example-prompts";
 import { MicButton } from "@/components/mic-button";
+import { PersonalitySelector } from "@/components/personality-selector";
 import { ResponseCard } from "@/components/response-card";
 import { RovikFace } from "@/components/rovik-face";
 import { TranscriptBox } from "@/components/transcript-box";
@@ -117,6 +125,8 @@ export function DemoShell() {
   const [demoState, setDemoState] = useState<DemoState>("idle");
   const [transcript, setTranscript] = useState("");
   const [mode, setMode] = useState<DemoMode>("planning");
+  const [personality, setPersonality] =
+    useState<RovikPersonality>(defaultPersonality);
   const [source, setSource] = useState<"voice" | "typed">("typed");
   const [response, setResponse] = useState<AskRovikResponse | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -301,6 +311,7 @@ export function DemoShell() {
         body: JSON.stringify({
           transcript: trimmed,
           mode: requestMode,
+          personality,
           source,
         }),
       });
@@ -407,6 +418,24 @@ export function DemoShell() {
           >
             {demoState === "processing" ? "Processing..." : "Send to Rovik"}
           </button>
+        </div>
+
+        <div className="mt-8">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div>
+              <p className="text-xs uppercase tracking-[0.24em] text-white/42">
+                Rovik personality
+              </p>
+              <p className="mt-2 text-sm text-white/45">
+                Switch tone any time before sending the request.
+              </p>
+            </div>
+          </div>
+          <PersonalitySelector
+            options={personalityOptions}
+            selected={personality}
+            onSelect={setPersonality}
+          />
         </div>
 
         <div className="mt-8">
