@@ -29,10 +29,47 @@ import { RovikFace } from "@/components/rovik-face";
 import { TranscriptBox } from "@/components/transcript-box";
 
 type WakeState = "off" | "arming" | "standby" | "detected";
+type SpeechProfile = {
+  wakeSupported: boolean;
+  commandContinuous: boolean;
+  wakeCompatibilityMessage: string | null;
+};
 
 const inactivityMs = 2600;
 const wakeRestartMs = 700;
 const wakeAlertMs = 260;
+
+function getSpeechProfile() {
+  if (typeof navigator === "undefined") {
+    return {
+      wakeSupported: true,
+      commandContinuous: true,
+      wakeCompatibilityMessage: null,
+    } satisfies SpeechProfile;
+  }
+
+  const userAgent = navigator.userAgent ?? "";
+  const isIOS = /iPhone|iPad|iPod/i.test(userAgent);
+  const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(userAgent);
+  const isWebKitOnly =
+    /Safari/i.test(userAgent) &&
+    !/Chrome|CriOS|Chromium|Edg|EdgiOS|FxiOS|OPR|Opera/i.test(userAgent);
+
+  if (isIOS || (isMobile && isWebKitOnly)) {
+    return {
+      wakeSupported: false,
+      commandContinuous: false,
+      wakeCompatibilityMessage:
+        "Wake mode is not reliable on this browser. Use the mic button for one command at a time.",
+    } satisfies SpeechProfile;
+  }
+
+  return {
+    wakeSupported: true,
+    commandContinuous: true,
+    wakeCompatibilityMessage: null,
+  } satisfies SpeechProfile;
+}
 
 function inferMode(transcript: string): DemoMode {
   const value = transcript.toLowerCase();
@@ -149,6 +186,7 @@ function getExpressionState({
 
 export function DemoShell() {
   const [speechSupported, setSpeechSupported] = useState(true);
+  const [wakeSupported, setWakeSupported] = useState(true);
   const [demoState, setDemoState] = useState<DemoState>("idle");
   const [wakeState, setWakeState] = useState<WakeState>("off");
   const [wakeModeEnabled, setWakeModeEnabled] = useState(false);
@@ -167,8 +205,14 @@ export function DemoShell() {
   const transcriptBaseRef = useRef("");
   const responseRef = useRef<AskRovikResponse | null>(null);
   const speechSupportedRef = useRef(true);
+  const wakeSupportedRef = useRef(true);
   const demoStateRef = useRef<DemoState>("idle");
   const wakeModeEnabledRef = useRef(false);
+  const speechProfileRef = useRef<SpeechProfile>({
+    wakeSupported: true,
+    commandContinuous: true,
+    wakeCompatibilityMessage: null,
+  });
   const wakeIgnoreEndRef = useRef(false);
   const wakeTriggeredRef = useRef(false);
   const wakeSeedTranscriptRef = useRef("");
@@ -191,6 +235,10 @@ export function DemoShell() {
   }, [speechSupported]);
 
   useEffect(() => {
+    wakeSupportedRef.current = wakeSupported;
+  }, [wakeSupported]);
+
+  useEffect(() => {
     demoStateRef.current = demoState;
   }, [demoState]);
 
@@ -199,6 +247,11 @@ export function DemoShell() {
   }, [wakeModeEnabled]);
 
   useEffect(() => {
+    const profile = getSpeechProfile();
+    speechProfileRef.current = profile;
+    wakeSupportedRef.current = profile.wakeSupported;
+    setWakeSupported(profile.wakeSupported);
+
     const supported = Boolean(
       typeof window !== "undefined" &&
         (window.SpeechRecognition || window.webkitSpeechRecognition),
@@ -308,6 +361,7 @@ export function DemoShell() {
 
     if (
       !wakeModeEnabledRef.current ||
+      !wakeSupportedRef.current ||
       wakeRecognitionRef.current ||
       commandRecognitionRef.current ||
       commandLaunchPendingRef.current ||
@@ -333,7 +387,7 @@ export function DemoShell() {
 
     const recognition = new RecognitionCtor();
     recognition.lang = "en-US";
-    recognition.continuous = true;
+    recognition.continuous = speechProfileRef.current.commandContinuous;
     recognition.interimResults = true;
     recognition.maxAlternatives = 1;
 
@@ -371,16 +425,30 @@ export function DemoShell() {
         wakeModeEnabledRef.current = false;
         setWakeModeEnabled(false);
         setWakeState("off");
-        setDemoStateValue("error");
-        setErrorMessage(
-          "Microphone permission was denied. Wake mode is off until microphone access is enabled again.",
-        );
+        setDemoStateValue(responseRef.current ? "ready" : "idle");
+        setErrorMessage(null);
         return;
       }
 
-      setErrorMessage(
-        "Wake listening was interrupted. You can re-enable it or use the mic button.",
-      );
+      if (
+        event.error === "service-not-allowed" ||
+        event.error === "audio-capture" ||
+        event.error === "network" ||
+        event.error === "language-not-supported"
+      ) {
+        wakeModeEnabledRef.current = false;
+        wakeSupportedRef.current = false;
+        setWakeModeEnabled(false);
+        setWakeSupported(false);
+        setWakeState("off");
+        setDemoStateValue(responseRef.current ? "ready" : "idle");
+        setErrorMessage(null);
+        return;
+      }
+
+      setWakeState("off");
+      setDemoStateValue(responseRef.current ? "ready" : "idle");
+      setErrorMessage(null);
     };
 
     recognition.onend = () => {
@@ -442,7 +510,16 @@ export function DemoShell() {
       }, wakeRestartMs);
     };
 
-    recognition.start();
+    try {
+      recognition.start();
+    } catch {
+      wakeRecognitionRef.current = null;
+      wakeModeEnabledRef.current = false;
+      setWakeModeEnabled(false);
+      setWakeState("off");
+      setDemoStateValue(responseRef.current ? "ready" : "idle");
+      setErrorMessage(null);
+    }
   }
 
   function resetInactivityTimer() {
@@ -495,7 +572,7 @@ export function DemoShell() {
 
     const recognition = new RecognitionCtor();
     recognition.lang = "en-US";
-    recognition.continuous = true;
+    recognition.continuous = speechProfileRef.current.commandContinuous;
     recognition.interimResults = true;
     recognition.maxAlternatives = 1;
 
@@ -539,6 +616,36 @@ export function DemoShell() {
 
     recognition.onerror = (event) => {
       if (event.error === "aborted") {
+        return;
+      }
+
+      if (event.error === "no-speech") {
+        clearInactivityTimer();
+        commandRecognitionRef.current = null;
+        commandLaunchPendingRef.current = false;
+        setDemoStateValue(responseRef.current ? "ready" : "idle");
+        setErrorMessage(null);
+
+        if (wakeModeEnabledRef.current && wakeSupportedRef.current) {
+          wakeRestartTimerRef.current = setTimeout(() => {
+            void startWakeListening({ skipPermissionCheck: true });
+          }, wakeRestartMs);
+        }
+        return;
+      }
+
+      if (
+        event.error === "service-not-allowed" ||
+        event.error === "audio-capture" ||
+        event.error === "language-not-supported"
+      ) {
+        clearInactivityTimer();
+        commandRecognitionRef.current = null;
+        commandLaunchPendingRef.current = false;
+        setDemoStateValue("unsupported");
+        setErrorMessage(
+          "Speech recognition is not available in this browser right now. Use typed input or try Chrome or Edge.",
+        );
         return;
       }
 
@@ -591,7 +698,17 @@ export function DemoShell() {
     setErrorMessage(null);
     setDemoStateValue("listening");
     setSource("voice");
-    recognition.start();
+    try {
+      recognition.start();
+    } catch {
+      commandRecognitionRef.current = null;
+      commandLaunchPendingRef.current = false;
+      setDemoStateValue("unsupported");
+      setErrorMessage(
+        "Speech recognition could not start in this browser. Use typed input or try Chrome or Edge.",
+      );
+      return;
+    }
     resetInactivityTimer();
     commandLaunchPendingRef.current = false;
   }
@@ -631,6 +748,13 @@ export function DemoShell() {
   async function handleWakeToggle() {
     if (!speechSupported) {
       setDemoStateValue("unsupported");
+      return;
+    }
+
+    if (!wakeSupportedRef.current) {
+      setWakeState("off");
+      setDemoStateValue(responseRef.current ? "ready" : "idle");
+      setErrorMessage(null);
       return;
     }
 
@@ -762,15 +886,18 @@ export function DemoShell() {
             <button
               type="button"
               onClick={handleWakeToggle}
-              disabled={!speechSupported || demoState === "processing"}
+              disabled={!speechSupported || !wakeSupported || demoState === "processing"}
               className="inline-flex items-center justify-center rounded-full border border-[rgba(57,219,194,0.22)] bg-[rgba(57,219,194,0.08)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[rgba(177,245,232,0.92)] transition duration-200 hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-45"
             >
-              {wakeToggleLabel(wakeState, wakeModeEnabled)}
+              {wakeToggleLabel(wakeState, wakeModeEnabled, wakeSupported)}
             </button>
             <p className="max-w-40 text-center text-sm leading-6 text-white/52">
               {wakeDescription({
                 speechSupported,
+                wakeSupported,
                 wakeState,
+                wakeCompatibilityMessage:
+                  speechProfileRef.current.wakeCompatibilityMessage,
               })}
             </p>
           </div>
@@ -906,7 +1033,15 @@ function statusLabel(state: DemoState, wakeState: WakeState) {
   return "Ready";
 }
 
-function wakeToggleLabel(wakeState: WakeState, wakeModeEnabled: boolean) {
+function wakeToggleLabel(
+  wakeState: WakeState,
+  wakeModeEnabled: boolean,
+  wakeSupported: boolean,
+) {
+  if (!wakeSupported) {
+    return "Wake mode unavailable";
+  }
+
   if (wakeState === "arming") {
     return "Arming wake mode";
   }
@@ -920,13 +1055,24 @@ function wakeToggleLabel(wakeState: WakeState, wakeModeEnabled: boolean) {
 
 function wakeDescription({
   speechSupported,
+  wakeSupported,
   wakeState,
+  wakeCompatibilityMessage,
 }: {
   speechSupported: boolean;
+  wakeSupported: boolean;
   wakeState: WakeState;
+  wakeCompatibilityMessage: string | null;
 }) {
   if (!speechSupported) {
     return "Wake mode is unavailable in this browser. Use manual text input instead.";
+  }
+
+  if (!wakeSupported) {
+    return (
+      wakeCompatibilityMessage ??
+      "Wake mode is unavailable in this browser. Use the mic button for a single command."
+    );
   }
 
   if (wakeState === "arming") {
