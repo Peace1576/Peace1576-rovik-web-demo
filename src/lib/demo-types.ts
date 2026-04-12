@@ -17,6 +17,7 @@ export type DemoState =
 
 export type RovikExpression =
   | "idle"
+  | "alert"
   | "listening"
   | "thinking"
   | "speaking"

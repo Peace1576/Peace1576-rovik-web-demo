@@ -16,13 +16,13 @@ type RovikFaceProps = {
 type FacePalette = {
   primary: string;
   secondary: string;
-  glow: string;
   aura: string;
   error: string;
 };
 
 const expressionLabel: Record<RovikExpression, string> = {
   idle: "Idle",
+  alert: "Alert",
   listening: "Listening",
   thinking: "Thinking",
   speaking: "Speaking",
@@ -35,35 +35,30 @@ const facePalette: Record<RovikPersonality, FacePalette> = {
   professional: {
     primary: "#53ddff",
     secondary: "#2d91ff",
-    glow: "rgba(83, 221, 255, 0.34)",
     aura: "rgba(83, 221, 255, 0.18)",
     error: "#ff6b86",
   },
   friendly: {
     primary: "#59f0db",
     secondary: "#21b6c7",
-    glow: "rgba(89, 240, 219, 0.36)",
     aura: "rgba(89, 240, 219, 0.18)",
     error: "#ff7585",
   },
   minimalist: {
     primary: "#8de9ff",
     secondary: "#56a9ff",
-    glow: "rgba(141, 233, 255, 0.28)",
     aura: "rgba(141, 233, 255, 0.14)",
     error: "#ff6f7f",
   },
   coach: {
     primary: "#6af0c8",
     secondary: "#2ccca0",
-    glow: "rgba(106, 240, 200, 0.34)",
     aura: "rgba(106, 240, 200, 0.18)",
     error: "#ff6a7c",
   },
   researcher: {
     primary: "#6fd3ff",
     secondary: "#3c8cff",
-    glow: "rgba(111, 211, 255, 0.34)",
     aura: "rgba(111, 211, 255, 0.16)",
     error: "#ff7a8f",
   },
@@ -116,11 +111,12 @@ export function RovikFace({
 }: RovikFaceProps) {
   const reduceMotion = useReducedMotion();
   const isBlinking = useBlink(!reduceMotion);
+  const gradientId = useId().replace(/:/g, "");
   const glowId = useId().replace(/:/g, "");
-  const screenGlowId = useId().replace(/:/g, "");
   const palette = facePalette[personality];
   const accent = expression === "error" ? palette.error : palette.primary;
-  const accentSoft = expression === "error" ? palette.error : palette.secondary;
+  const accentSoft =
+    expression === "error" ? palette.error : palette.secondary;
   const mouthHeight = 8 + Math.round(amplitude * 12);
 
   return (
@@ -164,11 +160,13 @@ export function RovikFace({
                         ? [0.22, 0.42, 0.22]
                         : expression === "listening"
                           ? [0.28, 0.54, 0.28]
-                          : [0.18, 0.3, 0.18],
+                          : expression === "alert"
+                            ? [0.24, 0.46, 0.24]
+                            : [0.18, 0.3, 0.18],
                   }
             }
             transition={{
-              duration: expression === "thinking" ? 1.4 : 1.8,
+              duration: expression === "alert" ? 0.42 : expression === "thinking" ? 1.4 : 1.8,
               repeat: Number.POSITIVE_INFINITY,
               ease: "easeInOut",
             }}
@@ -178,11 +176,23 @@ export function RovikFace({
             className="absolute inset-y-0 left-[-38%] w-[42%] skew-x-[-20deg] bg-[linear-gradient(90deg,transparent,rgba(255,255,255,0.12),transparent)]"
             animate={reduceMotion ? undefined : { x: ["0%", "255%"] }}
             transition={{
-              duration: expression === "listening" ? 1.5 : 2.4,
+              duration:
+                expression === "alert"
+                  ? 1.1
+                  : expression === "listening"
+                    ? 1.5
+                    : 2.4,
               repeat: Number.POSITIVE_INFINITY,
               ease: "easeInOut",
             }}
-            style={{ opacity: expression === "listening" ? 0.8 : 0.25 }}
+            style={{
+              opacity:
+                expression === "alert"
+                  ? 0.62
+                  : expression === "listening"
+                    ? 0.8
+                    : 0.25,
+            }}
           />
 
           <svg
@@ -192,11 +202,11 @@ export function RovikFace({
             aria-label={`Rovik face ${expressionLabel[expression].toLowerCase()}`}
           >
             <defs>
-              <linearGradient id={glowId} x1="0%" y1="0%" x2="100%" y2="100%">
+              <linearGradient id={gradientId} x1="0%" y1="0%" x2="100%" y2="100%">
                 <stop offset="0%" stopColor={accent} />
                 <stop offset="100%" stopColor={accentSoft} />
               </linearGradient>
-              <filter id={screenGlowId} x="-80%" y="-80%" width="260%" height="260%">
+              <filter id={glowId} x="-80%" y="-80%" width="260%" height="260%">
                 <feGaussianBlur stdDeviation="4.5" result="blur" />
                 <feColorMatrix
                   in="blur"
@@ -222,14 +232,14 @@ export function RovikFace({
                 expression={expression}
                 blink={isBlinking}
                 accent={accent}
-                gradientId={glowId}
-                glowId={screenGlowId}
+                gradientId={gradientId}
+                glowId={glowId}
                 reduceMotion={Boolean(reduceMotion)}
               />
               <Mouth
                 expression={expression}
                 accent={accent}
-                gradientId={glowId}
+                gradientId={gradientId}
                 mouthHeight={mouthHeight}
                 reduceMotion={Boolean(reduceMotion)}
               />
@@ -297,6 +307,36 @@ function Eyes({
           >
             <circle cx={cx} cy={48} r={10} fill={accent} filter={`url(#${glowId})`} />
             <circle cx={cx} cy={48} r={6.5} fill={`url(#${gradientId})`} />
+          </motion.g>
+        ))}
+      </>
+    );
+  }
+
+  if (expression === "alert") {
+    return (
+      <>
+        {[58, 122].map((cx, index) => (
+          <motion.g
+            key={cx}
+            style={{ transformOrigin: `${cx}px 46px` }}
+            animate={
+              reduceMotion
+                ? undefined
+                : {
+                    scale: [1, 1.12, 1],
+                    opacity: [0.88, 1, 0.88],
+                  }
+            }
+            transition={{
+              duration: 0.42,
+              delay: index * 0.03,
+              repeat: Number.POSITIVE_INFINITY,
+              ease: "easeInOut",
+            }}
+          >
+            <circle cx={cx} cy={46} r={9} fill={accent} filter={`url(#${glowId})`} />
+            <circle cx={cx} cy={46} r={5.5} fill={`url(#${gradientId})`} />
           </motion.g>
         ))}
       </>
@@ -514,6 +554,24 @@ function Mouth({
     );
   }
 
+  if (expression === "alert") {
+    return (
+      <motion.path
+        d="M78 84 L102 84"
+        fill="none"
+        stroke={`url(#${gradientId})`}
+        strokeWidth="5"
+        strokeLinecap="round"
+        animate={reduceMotion ? undefined : { opacity: [0.78, 1, 0.78] }}
+        transition={{
+          duration: 0.42,
+          repeat: Number.POSITIVE_INFINITY,
+          ease: "easeInOut",
+        }}
+      />
+    );
+  }
+
   if (expression === "success") {
     return (
       <motion.path
@@ -649,6 +707,27 @@ function Extras({
           duration: 6,
           repeat: Number.POSITIVE_INFINITY,
           ease: "linear",
+        }}
+        style={{ transformOrigin: "90px 60px" }}
+      />
+    );
+  }
+
+  if (expression === "alert") {
+    return (
+      <motion.circle
+        cx="90"
+        cy="60"
+        r="34"
+        fill="none"
+        stroke={accent}
+        strokeWidth="1.6"
+        opacity="0.34"
+        animate={reduceMotion ? undefined : { scale: [0.94, 1.03, 0.94] }}
+        transition={{
+          duration: 0.42,
+          repeat: Number.POSITIVE_INFINITY,
+          ease: "easeInOut",
         }}
         style={{ transformOrigin: "90px 60px" }}
       />

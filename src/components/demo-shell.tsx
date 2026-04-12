@@ -18,8 +18,8 @@ import type {
   DemoMode,
   DemoState,
   ExamplePrompt,
-  RovikPersonality,
   RovikExpression,
+  RovikPersonality,
 } from "@/lib/demo-types";
 import { ExamplePrompts } from "@/components/example-prompts";
 import { MicButton } from "@/components/mic-button";
@@ -28,7 +28,11 @@ import { ResponseCard } from "@/components/response-card";
 import { RovikFace } from "@/components/rovik-face";
 import { TranscriptBox } from "@/components/transcript-box";
 
+type WakeState = "off" | "arming" | "standby" | "detected";
+
 const inactivityMs = 2600;
+const wakeRestartMs = 700;
+const wakeAlertMs = 260;
 
 function inferMode(transcript: string): DemoMode {
   const value = transcript.toLowerCase();
@@ -78,13 +82,25 @@ function joinTranscript(base: string, addition: string) {
   return `${basePart} ${additionPart}`.trim();
 }
 
+function containsWakeWord(value: string) {
+  return /\b(?:(?:hey|ok(?:ay)?)\s+)?rovik\b/i.test(value);
+}
+
+function stripWakeWord(value: string) {
+  return value
+    .replace(/\b(?:(?:hey|ok(?:ay)?)\s+)?rovik\b[\s,:;.!?-]*/i, "")
+    .trim();
+}
+
 function getExpressionState({
   demoState,
+  wakeState,
   transcript,
   response,
   errorMessage,
 }: {
   demoState: DemoState;
+  wakeState: WakeState;
   transcript: string;
   response: AskRovikResponse | null;
   errorMessage: string | null;
@@ -97,6 +113,10 @@ function getExpressionState({
     return "confused";
   }
 
+  if (wakeState === "detected") {
+    return "alert";
+  }
+
   if (demoState === "listening") {
     return "listening";
   }
@@ -106,11 +126,18 @@ function getExpressionState({
   }
 
   if (response && demoState === "ready") {
-    if (/need more information|please provide|please clarify|let me know more/i.test(response.summary)) {
+    if (
+      /need more information|please provide|please clarify|let me know more/i.test(
+        response.summary,
+      )
+    ) {
       return "confused";
     }
 
-    if (response.mode === "general" && transcript.trim().split(/\s+/).length <= 3) {
+    if (
+      response.mode === "general" &&
+      transcript.trim().split(/\s+/).length <= 3
+    ) {
       return "speaking";
     }
 
@@ -123,6 +150,8 @@ function getExpressionState({
 export function DemoShell() {
   const [speechSupported, setSpeechSupported] = useState(true);
   const [demoState, setDemoState] = useState<DemoState>("idle");
+  const [wakeState, setWakeState] = useState<WakeState>("off");
+  const [wakeModeEnabled, setWakeModeEnabled] = useState(false);
   const [transcript, setTranscript] = useState("");
   const [mode, setMode] = useState<DemoMode>("planning");
   const [personality, setPersonality] =
@@ -131,15 +160,43 @@ export function DemoShell() {
   const [response, setResponse] = useState<AskRovikResponse | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const commandRecognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const wakeRecognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const inactivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wakeRestartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const transcriptBaseRef = useRef("");
+  const responseRef = useRef<AskRovikResponse | null>(null);
+  const speechSupportedRef = useRef(true);
+  const demoStateRef = useRef<DemoState>("idle");
+  const wakeModeEnabledRef = useRef(false);
+  const wakeIgnoreEndRef = useRef(false);
+  const wakeTriggeredRef = useRef(false);
+  const wakeSeedTranscriptRef = useRef("");
+  const commandLaunchPendingRef = useRef(false);
+
   const expression = getExpressionState({
     demoState,
+    wakeState,
     transcript,
     response,
     errorMessage,
   });
+
+  useEffect(() => {
+    responseRef.current = response;
+  }, [response]);
+
+  useEffect(() => {
+    speechSupportedRef.current = speechSupported;
+  }, [speechSupported]);
+
+  useEffect(() => {
+    demoStateRef.current = demoState;
+  }, [demoState]);
+
+  useEffect(() => {
+    wakeModeEnabledRef.current = wakeModeEnabled;
+  }, [wakeModeEnabled]);
 
   useEffect(() => {
     const supported = Boolean(
@@ -148,11 +205,18 @@ export function DemoShell() {
     );
 
     setSpeechSupported(supported);
+    speechSupportedRef.current = supported;
 
     if (!supported) {
+      demoStateRef.current = "unsupported";
       setDemoState("unsupported");
     }
   }, []);
+
+  function setDemoStateValue(next: DemoState) {
+    demoStateRef.current = next;
+    setDemoState(next);
+  }
 
   function clearInactivityTimer() {
     if (!inactivityTimerRef.current) {
@@ -163,44 +227,269 @@ export function DemoShell() {
     inactivityTimerRef.current = null;
   }
 
-  function stopRecognition() {
+  function clearWakeRestartTimer() {
+    if (!wakeRestartTimerRef.current) {
+      return;
+    }
+
+    clearTimeout(wakeRestartTimerRef.current);
+    wakeRestartTimerRef.current = null;
+  }
+
+  function getRecognitionConstructor() {
+    if (typeof window === "undefined") {
+      return null;
+    }
+
+    return window.SpeechRecognition || window.webkitSpeechRecognition || null;
+  }
+
+  async function ensureMicrophoneAccess() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach((track) => track.stop());
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function stopCommandRecognition({ abort = false }: { abort?: boolean } = {}) {
     clearInactivityTimer();
-    recognitionRef.current?.stop();
+
+    if (!commandRecognitionRef.current) {
+      return;
+    }
+
+    if (abort) {
+      commandRecognitionRef.current.abort();
+      return;
+    }
+
+    commandRecognitionRef.current.stop();
+  }
+
+  function stopWakeRecognition({
+    abort = false,
+    ignoreEnd = false,
+  }: {
+    abort?: boolean;
+    ignoreEnd?: boolean;
+  } = {}) {
+    clearWakeRestartTimer();
+    wakeIgnoreEndRef.current = ignoreEnd;
+
+    if (!wakeRecognitionRef.current) {
+      return;
+    }
+
+    if (abort) {
+      wakeRecognitionRef.current.abort();
+      return;
+    }
+
+    wakeRecognitionRef.current.stop();
+  }
+
+  async function startWakeListening({
+    skipPermissionCheck = false,
+  }: {
+    skipPermissionCheck?: boolean;
+  } = {}) {
+    const RecognitionCtor = getRecognitionConstructor();
+
+    if (!RecognitionCtor) {
+      setSpeechSupported(false);
+      speechSupportedRef.current = false;
+      setDemoStateValue("unsupported");
+      setWakeState("off");
+      return;
+    }
+
+    if (
+      !wakeModeEnabledRef.current ||
+      wakeRecognitionRef.current ||
+      commandRecognitionRef.current ||
+      commandLaunchPendingRef.current ||
+      demoStateRef.current === "processing"
+    ) {
+      return;
+    }
+
+    if (!skipPermissionCheck) {
+      const hasAccess = await ensureMicrophoneAccess();
+
+      if (!hasAccess) {
+        wakeModeEnabledRef.current = false;
+        setWakeModeEnabled(false);
+        setWakeState("off");
+        setDemoStateValue("error");
+        setErrorMessage(
+          "Microphone access was blocked. Wake mode could not start.",
+        );
+        return;
+      }
+    }
+
+    const recognition = new RecognitionCtor();
+    recognition.lang = "en-US";
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
+
+    wakeRecognitionRef.current = recognition;
+    setWakeState("standby");
+    setErrorMessage(null);
+
+    recognition.onresult = (event) => {
+      let heard = "";
+
+      for (let index = event.resultIndex; index < event.results.length; index += 1) {
+        const chunk = event.results[index][0]?.transcript ?? "";
+        heard += ` ${chunk}`;
+      }
+
+      const transcriptChunk = heard.trim();
+
+      if (!transcriptChunk || !containsWakeWord(transcriptChunk)) {
+        return;
+      }
+
+      wakeTriggeredRef.current = true;
+      wakeSeedTranscriptRef.current = stripWakeWord(transcriptChunk);
+      setWakeState("detected");
+      setErrorMessage(null);
+      stopWakeRecognition();
+    };
+
+    recognition.onerror = (event) => {
+      if (event.error === "aborted" || event.error === "no-speech") {
+        return;
+      }
+
+      if (event.error === "not-allowed") {
+        wakeModeEnabledRef.current = false;
+        setWakeModeEnabled(false);
+        setWakeState("off");
+        setDemoStateValue("error");
+        setErrorMessage(
+          "Microphone permission was denied. Wake mode is off until microphone access is enabled again.",
+        );
+        return;
+      }
+
+      setErrorMessage(
+        "Wake listening was interrupted. You can re-enable it or use the mic button.",
+      );
+    };
+
+    recognition.onend = () => {
+      wakeRecognitionRef.current = null;
+      clearWakeRestartTimer();
+
+      if (wakeTriggeredRef.current) {
+        const seedTranscript = wakeSeedTranscriptRef.current;
+        wakeTriggeredRef.current = false;
+        wakeSeedTranscriptRef.current = "";
+
+        window.setTimeout(() => {
+          void startCommandListening({
+            resetTranscript: true,
+            seedTranscript,
+          });
+        }, wakeAlertMs);
+
+        return;
+      }
+
+      if (wakeIgnoreEndRef.current) {
+        wakeIgnoreEndRef.current = false;
+
+        if (!wakeModeEnabledRef.current) {
+          setWakeState("off");
+          return;
+        }
+
+        if (
+          commandLaunchPendingRef.current ||
+          commandRecognitionRef.current ||
+          demoStateRef.current === "processing"
+        ) {
+          return;
+        }
+
+        wakeRestartTimerRef.current = setTimeout(() => {
+          void startWakeListening({ skipPermissionCheck: true });
+        }, wakeRestartMs);
+        return;
+      }
+
+      if (!wakeModeEnabledRef.current) {
+        setWakeState("off");
+        return;
+      }
+
+      if (
+        commandLaunchPendingRef.current ||
+        commandRecognitionRef.current ||
+        demoStateRef.current === "processing"
+      ) {
+        return;
+      }
+
+      wakeRestartTimerRef.current = setTimeout(() => {
+        void startWakeListening({ skipPermissionCheck: true });
+      }, wakeRestartMs);
+    };
+
+    recognition.start();
   }
 
   function resetInactivityTimer() {
     clearInactivityTimer();
     inactivityTimerRef.current = setTimeout(() => {
-      recognitionRef.current?.stop();
+      stopCommandRecognition();
     }, inactivityMs);
   }
 
-  useEffect(() => {
-    return () => {
-      clearInactivityTimer();
-      recognitionRef.current?.abort();
-      recognitionRef.current = null;
-    };
-  }, []);
-
-  async function startListening() {
-    const RecognitionCtor =
-      window.SpeechRecognition || window.webkitSpeechRecognition;
+  async function startCommandListening({
+    resetTranscript = false,
+    seedTranscript = "",
+  }: {
+    resetTranscript?: boolean;
+    seedTranscript?: string;
+  } = {}) {
+    const RecognitionCtor = getRecognitionConstructor();
 
     if (!RecognitionCtor) {
       setSpeechSupported(false);
-      setDemoState("unsupported");
+      speechSupportedRef.current = false;
+      setDemoStateValue("unsupported");
       return;
     }
 
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      stream.getTracks().forEach((track) => track.stop());
-    } catch {
-      setDemoState("error");
+    if (commandRecognitionRef.current || commandLaunchPendingRef.current) {
+      return;
+    }
+
+    commandLaunchPendingRef.current = true;
+    stopWakeRecognition({ ignoreEnd: true });
+
+    const hasAccess = await ensureMicrophoneAccess();
+
+    if (!hasAccess) {
+      commandLaunchPendingRef.current = false;
+      setDemoStateValue("error");
       setErrorMessage(
         "Microphone access was blocked. You can still type a prompt manually.",
       );
+
+      if (wakeModeEnabledRef.current) {
+        wakeRestartTimerRef.current = setTimeout(() => {
+          void startWakeListening({ skipPermissionCheck: true });
+        }, wakeRestartMs);
+      }
+
       return;
     }
 
@@ -210,8 +499,17 @@ export function DemoShell() {
     recognition.interimResults = true;
     recognition.maxAlternatives = 1;
 
-    transcriptBaseRef.current = transcript.trim();
-    recognitionRef.current = recognition;
+    const baseTranscript = resetTranscript
+      ? seedTranscript.trim()
+      : joinTranscript(transcript, seedTranscript);
+
+    transcriptBaseRef.current = baseTranscript;
+    commandRecognitionRef.current = recognition;
+
+    if (resetTranscript || seedTranscript) {
+      setTranscript(baseTranscript);
+      setMode(inferMode(baseTranscript));
+    }
 
     recognition.onresult = (event) => {
       let finalTranscript = "";
@@ -240,51 +538,115 @@ export function DemoShell() {
     };
 
     recognition.onerror = (event) => {
+      if (event.error === "aborted") {
+        return;
+      }
+
       clearInactivityTimer();
-      setDemoState("error");
+      commandRecognitionRef.current = null;
+      commandLaunchPendingRef.current = false;
+      setDemoStateValue("error");
       setErrorMessage(
         event.error === "not-allowed"
           ? "Microphone permission was denied. Type a prompt instead or re-enable the mic permission."
           : "Voice transcription failed. Try again or type the request manually.",
       );
+
+      if (wakeModeEnabledRef.current) {
+        wakeRestartTimerRef.current = setTimeout(() => {
+          void startWakeListening({ skipPermissionCheck: true });
+        }, wakeRestartMs);
+      }
     };
 
     recognition.onend = () => {
       clearInactivityTimer();
-      recognitionRef.current = null;
+      commandRecognitionRef.current = null;
+      commandLaunchPendingRef.current = false;
 
       setDemoState((current) => {
-        if (current === "processing") {
-          return current;
-        }
+        const nextState =
+          current === "processing"
+            ? current
+            : !speechSupportedRef.current
+              ? "unsupported"
+              : responseRef.current
+                ? "ready"
+                : "idle";
 
-        if (!speechSupported) {
-          return "unsupported";
-        }
-
-        return response ? "ready" : "idle";
+        demoStateRef.current = nextState;
+        return nextState;
       });
+
+      if (
+        wakeModeEnabledRef.current &&
+        demoStateRef.current !== "processing"
+      ) {
+        wakeRestartTimerRef.current = setTimeout(() => {
+          void startWakeListening({ skipPermissionCheck: true });
+        }, wakeRestartMs);
+      }
     };
 
     setErrorMessage(null);
-    setDemoState("listening");
+    setDemoStateValue("listening");
     setSource("voice");
     recognition.start();
     resetInactivityTimer();
+    commandLaunchPendingRef.current = false;
   }
+
+  useEffect(() => {
+    return () => {
+      if (inactivityTimerRef.current) {
+        clearTimeout(inactivityTimerRef.current);
+      }
+
+      if (wakeRestartTimerRef.current) {
+        clearTimeout(wakeRestartTimerRef.current);
+      }
+
+      commandRecognitionRef.current?.abort();
+      wakeIgnoreEndRef.current = true;
+      wakeRecognitionRef.current?.abort();
+      commandRecognitionRef.current = null;
+      wakeRecognitionRef.current = null;
+    };
+  }, []);
 
   async function handleMicClick() {
     if (!speechSupported) {
-      setDemoState("unsupported");
+      setDemoStateValue("unsupported");
       return;
     }
 
     if (demoState === "listening") {
-      stopRecognition();
+      stopCommandRecognition();
       return;
     }
 
-    await startListening();
+    await startCommandListening();
+  }
+
+  async function handleWakeToggle() {
+    if (!speechSupported) {
+      setDemoStateValue("unsupported");
+      return;
+    }
+
+    if (wakeModeEnabledRef.current) {
+      wakeModeEnabledRef.current = false;
+      setWakeModeEnabled(false);
+      setWakeState("off");
+      stopWakeRecognition({ abort: true, ignoreEnd: true });
+      return;
+    }
+
+    wakeModeEnabledRef.current = true;
+    setWakeModeEnabled(true);
+    setWakeState("arming");
+    setErrorMessage(null);
+    await startWakeListening();
   }
 
   async function handleSubmit() {
@@ -295,11 +657,11 @@ export function DemoShell() {
     }
 
     if (demoState === "listening") {
-      stopRecognition();
+      stopCommandRecognition();
     }
 
     setErrorMessage(null);
-    setDemoState("processing");
+    setDemoStateValue("processing");
 
     try {
       const requestMode = mode === "general" ? inferMode(trimmed) : mode;
@@ -332,14 +694,26 @@ export function DemoShell() {
         setResponse(payload);
       });
       setMode(payload.mode);
-      setDemoState("ready");
+      setDemoStateValue("ready");
+
+      if (wakeModeEnabledRef.current) {
+        wakeRestartTimerRef.current = setTimeout(() => {
+          void startWakeListening({ skipPermissionCheck: true });
+        }, wakeRestartMs);
+      }
     } catch (error) {
-      setDemoState(speechSupported ? "error" : "unsupported");
+      setDemoStateValue(speechSupported ? "error" : "unsupported");
       setErrorMessage(
         error instanceof Error
           ? error.message
           : "The request failed before Rovik could respond.",
       );
+
+      if (wakeModeEnabledRef.current) {
+        wakeRestartTimerRef.current = setTimeout(() => {
+          void startWakeListening({ skipPermissionCheck: true });
+        }, wakeRestartMs);
+      }
     }
   }
 
@@ -353,7 +727,7 @@ export function DemoShell() {
       return;
     }
 
-    setDemoState(response ? "ready" : "idle");
+    setDemoStateValue(response ? "ready" : "idle");
   }
 
   return (
@@ -373,7 +747,7 @@ export function DemoShell() {
           </div>
 
           <div className="rounded-full border border-[rgba(57,219,194,0.18)] bg-[rgba(57,219,194,0.09)] px-4 py-2 text-sm font-medium text-[rgba(177,245,232,0.92)]">
-            {statusLabel(demoState)}
+            {statusLabel(demoState, wakeState)}
           </div>
         </div>
 
@@ -385,10 +759,19 @@ export function DemoShell() {
               disabled={demoState === "processing" || !speechSupported}
               onClick={handleMicClick}
             />
-            <p className="max-w-32 text-center text-sm leading-6 text-white/52">
-              {speechSupported
-                ? "Click once to start listening. Click again to stop."
-                : "Voice input is unavailable in this browser."}
+            <button
+              type="button"
+              onClick={handleWakeToggle}
+              disabled={!speechSupported || demoState === "processing"}
+              className="inline-flex items-center justify-center rounded-full border border-[rgba(57,219,194,0.22)] bg-[rgba(57,219,194,0.08)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[rgba(177,245,232,0.92)] transition duration-200 hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              {wakeToggleLabel(wakeState, wakeModeEnabled)}
+            </button>
+            <p className="max-w-40 text-center text-sm leading-6 text-white/52">
+              {wakeDescription({
+                speechSupported,
+                wakeState,
+              })}
             </p>
           </div>
 
@@ -464,11 +847,11 @@ export function DemoShell() {
           </p>
           <div className="mt-4 grid gap-3">
             {[
-              "Open the demo page.",
-              "Speak or type a command.",
+              "Arm wake mode once or use the mic button.",
+              "Say “Rovik” or “Hey Rovik.”",
+              "Rovik switches from standby to command listening.",
               "Review the transcript.",
               "Send the request to Gemini.",
-              "Read the structured Rovik response.",
             ].map((step, index) => (
               <div
                 key={step}
@@ -487,13 +870,25 @@ export function DemoShell() {
   );
 }
 
-function statusLabel(state: DemoState) {
+function statusLabel(state: DemoState, wakeState: WakeState) {
   if (state === "listening") {
     return "Listening...";
   }
 
   if (state === "processing") {
     return "Processing...";
+  }
+
+  if (wakeState === "arming") {
+    return "Arming wake mode";
+  }
+
+  if (wakeState === "detected") {
+    return "Wake word detected";
+  }
+
+  if (wakeState === "standby") {
+    return "Wake mode active";
   }
 
   if (state === "ready") {
@@ -509,4 +904,42 @@ function statusLabel(state: DemoState) {
   }
 
   return "Ready";
+}
+
+function wakeToggleLabel(wakeState: WakeState, wakeModeEnabled: boolean) {
+  if (wakeState === "arming") {
+    return "Arming wake mode";
+  }
+
+  if (wakeModeEnabled) {
+    return "Disable wake mode";
+  }
+
+  return "Enable wake mode";
+}
+
+function wakeDescription({
+  speechSupported,
+  wakeState,
+}: {
+  speechSupported: boolean;
+  wakeState: WakeState;
+}) {
+  if (!speechSupported) {
+    return "Wake mode is unavailable in this browser. Use manual text input instead.";
+  }
+
+  if (wakeState === "arming") {
+    return "Grant microphone access once so Rovik can keep listening for the wake word.";
+  }
+
+  if (wakeState === "standby") {
+    return "Wake mode is armed. Say “Rovik” or “Hey Rovik” to start command capture.";
+  }
+
+  if (wakeState === "detected") {
+    return "Wake word heard. Starting the command mic now.";
+  }
+
+  return "Arm wake mode once, or click the mic button for a manual command session.";
 }
