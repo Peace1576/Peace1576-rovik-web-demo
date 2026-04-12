@@ -1,0 +1,89 @@
+@import "tailwindcss";
+
+:root {
+  --background: #040b14;
+  --foreground: #f6fbff;
+  --muted: rgba(214, 228, 240, 0.68);
+  --accent: #39dbc2;
+  --accent-strong: #0f8a7b;
+  --accent-warm: #ffb257;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-body);
+  --font-mono: var(--font-mono);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--background);
+}
+
+body {
+  min-height: 100vh;
+  color: var(--foreground);
+  font-family: var(--font-body), sans-serif;
+  background:
+    radial-gradient(circle at 12% 14%, rgba(57, 219, 194, 0.18), transparent 25%),
+    radial-gradient(circle at 86% 10%, rgba(255, 178, 87, 0.16), transparent 18%),
+    radial-gradient(circle at 78% 70%, rgba(57, 219, 194, 0.08), transparent 22%),
+    linear-gradient(180deg, #040b14 0%, #07101b 44%, #030913 100%);
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.16;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+  background-size: 92px 92px;
+  mask-image: radial-gradient(circle at center, black 30%, transparent 82%);
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+::selection {
+  color: #02131d;
+  background: rgba(57, 219, 194, 0.9);
+}
+
+.font-display {
+  font-family: var(--font-display), var(--font-body), sans-serif;
+}
+
+.rovik-mic-pulse {
+  animation: rovik-mic-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes rovik-mic-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    box-shadow:
+      0 0 0 0 rgba(57, 219, 194, 0.2),
+      0 0 0 12px rgba(57, 219, 194, 0.08);
+  }
+  50% {
+    transform: scale(1.03);
+    box-shadow:
+      0 0 0 10px rgba(57, 219, 194, 0),
+      0 0 0 18px rgba(57, 219, 194, 0.03);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rovik-mic-pulse {
+    animation: none !important;
+  }
+}

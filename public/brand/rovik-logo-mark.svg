@@ -1,0 +1,52 @@
+<svg width="320" height="320" viewBox="0 0 320 320" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="320" height="320" rx="18" fill="#FCFDFD" />
+  <defs>
+    <linearGradient id="rovik-mark-arrow" x1="136" y1="150" x2="273" y2="46" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#16C5C7" />
+      <stop offset="1" stop-color="#10B6C2" />
+    </linearGradient>
+    <linearGradient id="rovik-mark-swoosh" x1="118" y1="159" x2="225" y2="233" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#17C8C9" />
+      <stop offset="1" stop-color="#0D8D82" />
+    </linearGradient>
+  </defs>
+
+  <g transform="translate(-18 -10)">
+    <path
+      d="M108 27V296"
+      stroke="#0A2F67"
+      stroke-width="36"
+      stroke-linecap="round"
+    />
+    <path
+      d="M108 27H223C276 27 315 44 342 77"
+      stroke="#0A2F67"
+      stroke-width="36"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+    <path
+      d="M108 161C135 120 176 99 223 99C295 99 345 149 345 218C345 286 295 336 226 336C178 336 139 318 108 282"
+      stroke="#0A2F67"
+      stroke-width="36"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+    <path
+      d="M173 186C220 184 261 159 310 115C328 99 346 80 367 54"
+      stroke="url(#rovik-mark-arrow)"
+      stroke-width="30"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+    <path d="M330 63L406 45L379 118Z" fill="url(#rovik-mark-arrow)" />
+    <path
+      d="M169 222C211 225 242 246 283 293C299 311 317 328 337 346"
+      stroke="url(#rovik-mark-swoosh)"
+      stroke-width="28"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      opacity="0.98"
+    />
+  </g>
+</svg>
