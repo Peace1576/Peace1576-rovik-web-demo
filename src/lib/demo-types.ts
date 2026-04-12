@@ -8,6 +8,15 @@ export type DemoState =
   | "error"
   | "unsupported";
 
+export type RovikExpression =
+  | "idle"
+  | "listening"
+  | "thinking"
+  | "speaking"
+  | "success"
+  | "confused"
+  | "error";
+
 export type AskRovikRequest = {
   transcript: string;
   mode: DemoMode;

@@ -12,10 +12,12 @@ import type {
   DemoMode,
   DemoState,
   ExamplePrompt,
+  RovikExpression,
 } from "@/lib/demo-types";
 import { ExamplePrompts } from "@/components/example-prompts";
 import { MicButton } from "@/components/mic-button";
 import { ResponseCard } from "@/components/response-card";
+import { RovikFace } from "@/components/rovik-face";
 import { TranscriptBox } from "@/components/transcript-box";
 
 const inactivityMs = 2600;
@@ -68,6 +70,48 @@ function joinTranscript(base: string, addition: string) {
   return `${basePart} ${additionPart}`.trim();
 }
 
+function getExpressionState({
+  demoState,
+  transcript,
+  response,
+  errorMessage,
+}: {
+  demoState: DemoState;
+  transcript: string;
+  response: AskRovikResponse | null;
+  errorMessage: string | null;
+}): RovikExpression {
+  if (errorMessage || demoState === "error") {
+    return "error";
+  }
+
+  if (demoState === "unsupported") {
+    return "confused";
+  }
+
+  if (demoState === "listening") {
+    return "listening";
+  }
+
+  if (demoState === "processing") {
+    return "thinking";
+  }
+
+  if (response && demoState === "ready") {
+    if (/need more information|please provide|please clarify|let me know more/i.test(response.summary)) {
+      return "confused";
+    }
+
+    if (response.mode === "general" && transcript.trim().split(/\s+/).length <= 3) {
+      return "speaking";
+    }
+
+    return "success";
+  }
+
+  return "idle";
+}
+
 export function DemoShell() {
   const [speechSupported, setSpeechSupported] = useState(true);
   const [demoState, setDemoState] = useState<DemoState>("idle");
@@ -80,6 +124,12 @@ export function DemoShell() {
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const inactivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const transcriptBaseRef = useRef("");
+  const expression = getExpressionState({
+    demoState,
+    transcript,
+    response,
+    errorMessage,
+  });
 
   useEffect(() => {
     const supported = Boolean(
@@ -318,6 +368,7 @@ export function DemoShell() {
 
         <div className="mt-8 grid gap-6 lg:grid-cols-[auto_1fr]">
           <div className="flex flex-col items-center gap-4">
+            <RovikFace expression={expression} />
             <MicButton
               state={demoState}
               disabled={demoState === "processing" || !speechSupported}
