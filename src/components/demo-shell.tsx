@@ -379,7 +379,7 @@ export function DemoShell() {
 
         <div className="mt-8 grid gap-6 lg:grid-cols-[auto_1fr]">
           <div className="flex flex-col items-center gap-4">
-            <RovikFace expression={expression} />
+            <RovikFace expression={expression} personality={personality} />
             <MicButton
               state={demoState}
               disabled={demoState === "processing" || !speechSupported}
