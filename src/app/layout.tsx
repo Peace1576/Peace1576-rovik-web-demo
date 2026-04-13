@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Analytics } from "@vercel/analytics/next";
 import { IBM_Plex_Mono, Manrope, Space_Grotesk } from "next/font/google";
 import "./globals.css";
 
@@ -55,7 +56,10 @@ export default function RootLayout({
       lang="en"
       className={`${displayFont.variable} ${bodyFont.variable} ${monoFont.variable} h-full scroll-smooth antialiased`}
     >
-      <body className="min-h-full flex flex-col bg-[#040b14]">{children}</body>
+      <body className="min-h-full flex flex-col bg-[#040b14]">
+        {children}
+        <Analytics />
+      </body>
     </html>
   );
 }
