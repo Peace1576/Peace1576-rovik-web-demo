@@ -206,6 +206,60 @@ export async function exchangeCodeForSession(code: string) {
   };
 }
 
+export async function signInWithEmailPassword({
+  email,
+  password,
+}: {
+  email: string;
+  password: string;
+}) {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email,
+    password,
+  });
+
+  if (error || !data.session) {
+    throw new Error(
+      error?.message || "Email sign-in could not complete right now.",
+    );
+  }
+
+  return {
+    session: data.session,
+    user: toSessionUser(data.user ?? data.session.user ?? null),
+  };
+}
+
+export async function signUpWithEmailPassword({
+  email,
+  password,
+  origin,
+}: {
+  email: string;
+  password: string;
+  origin: string;
+}) {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase.auth.signUp({
+    email,
+    password,
+    options: {
+      emailRedirectTo: new URL("/demo", origin).toString(),
+    },
+  });
+
+  if (error) {
+    throw new Error(error.message || "Account creation could not complete.");
+  }
+
+  return {
+    session: data.session ?? null,
+    user: toSessionUser(data.user ?? data.session?.user ?? null),
+    needsEmailConfirmation: !data.session,
+  };
+}
+
 export function buildOwnerKey(
   user: SessionUser | null,
   guestId: string,

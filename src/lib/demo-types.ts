@@ -103,6 +103,21 @@ export type ConversationSessionResponse = {
   user: SessionUser | null;
 };
 
+export type PasswordAuthMode = "sign-in" | "sign-up";
+
+export type PasswordAuthRequest = {
+  mode: PasswordAuthMode;
+  email: string;
+  password: string;
+};
+
+export type PasswordAuthResponse = {
+  ok: boolean;
+  needsEmailConfirmation?: boolean;
+  message?: string;
+  user?: SessionUser | null;
+};
+
 export type ExamplePrompt = {
   label: string;
   prompt: string;

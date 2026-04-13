@@ -40,7 +40,7 @@ export function ConversationPanel({
           <p className="mt-2 text-sm leading-6 text-white/60">
             {user?.isAuthenticated
               ? `Signed in as ${user.email ?? user.displayName ?? "Google user"}. Context is saved to your account.`
-              : "Guest mode is active. This browser will keep the current thread and autosave it on the backend."}
+              : "Sign in to unlock saved account memory, follow-up context, and conversation history."}
           </p>
         </div>
         <div className="rounded-full border border-white/10 bg-white/6 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/60">

@@ -62,6 +62,14 @@ export async function POST(request: NextRequest) {
     }
 
     const authSession = await getAuthSession(request.cookies);
+
+    if (!authSession.user?.isAuthenticated) {
+      return NextResponse.json(
+        { error: "Sign in to use the Rovik demo." },
+        { status: 401 },
+      );
+    }
+
     const guestId = getGuestIdFromCookies(request.cookies) ?? crypto.randomUUID();
     const conversationId =
       requestedConversationId ||

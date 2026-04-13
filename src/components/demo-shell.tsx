@@ -19,6 +19,7 @@ import type {
   RovikPersonality,
   SessionUser,
 } from "@/lib/demo-types";
+import { AuthModal } from "@/components/auth-modal";
 import { ConversationPanel } from "@/components/conversation-panel";
 import { ExamplePrompts } from "@/components/example-prompts";
 import { MicButton } from "@/components/mic-button";
@@ -204,6 +205,7 @@ export function DemoShell() {
   const [user, setUser] = useState<SessionUser | null>(null);
   const [sessionLoading, setSessionLoading] = useState(true);
   const [authBusy, setAuthBusy] = useState(false);
+  const [authModalError, setAuthModalError] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const commandRecognitionRef = useRef<SpeechRecognitionLike | null>(null);
@@ -233,6 +235,7 @@ export function DemoShell() {
     messages,
     errorMessage,
   });
+  const authRequired = !sessionLoading && !user?.isAuthenticated;
 
   useEffect(() => {
     messagesRef.current = messages;
@@ -282,7 +285,10 @@ export function DemoShell() {
     const authError = new URLSearchParams(window.location.search).get("authError");
 
     if (authError) {
-      setErrorMessage(authError);
+      setAuthModalError(authError);
+      const nextUrl = new URL(window.location.href);
+      nextUrl.searchParams.delete("authError");
+      window.history.replaceState({}, "", nextUrl.toString());
     }
   }, []);
 
@@ -350,6 +356,10 @@ export function DemoShell() {
       setConversationId(payload.conversationId);
       setMessages(payload.messages ?? []);
       setUser(payload.user);
+
+      if (payload.user?.isAuthenticated) {
+        setAuthModalError(null);
+      }
 
       if (reset) {
         setTranscript("");
@@ -843,6 +853,10 @@ export function DemoShell() {
   }, []);
 
   async function handleMicClick() {
+    if (authRequired) {
+      return;
+    }
+
     if (!speechSupported) {
       setDemoStateValue("unsupported");
       return;
@@ -857,6 +871,10 @@ export function DemoShell() {
   }
 
   async function handleWakeToggle() {
+    if (authRequired) {
+      return;
+    }
+
     if (!speechSupported) {
       setDemoStateValue("unsupported");
       return;
@@ -885,6 +903,10 @@ export function DemoShell() {
   }
 
   async function handleSubmit() {
+    if (authRequired) {
+      return;
+    }
+
     const trimmed = transcript.trim();
 
     if (!trimmed) {
@@ -957,6 +979,10 @@ export function DemoShell() {
   }
 
   function handlePromptSelect(prompt: ExamplePrompt) {
+    if (authRequired) {
+      return;
+    }
+
     setTranscript(prompt.prompt);
     setMode(prompt.mode);
     setSource("typed");
@@ -970,6 +996,10 @@ export function DemoShell() {
   }
 
   async function handleNewConversation() {
+    if (authRequired) {
+      return;
+    }
+
     setErrorMessage(null);
     await loadSession(true);
     setDemoStateValue("idle");
@@ -991,183 +1021,211 @@ export function DemoShell() {
     }
   }
 
-  return (
-    <div className="grid gap-6 xl:grid-cols-[1.04fr_0.96fr]">
-      <section className="rounded-[2rem] border border-white/10 bg-[linear-gradient(180deg,rgba(9,16,27,0.92),rgba(5,12,22,0.96))] p-6 shadow-[0_28px_80px_rgba(2,8,17,0.34)] md:p-8">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <p className="text-xs uppercase tracking-[0.24em] text-white/42">
-              Interactive demo
-            </p>
-            <h2 className="mt-3 text-3xl font-semibold tracking-[-0.05em] text-white md:text-4xl">
-              {rovikCopy.demoTitle}
-            </h2>
-            <p className="mt-4 max-w-2xl text-base leading-7 text-white/62">
-              {rovikCopy.demoDescription}
-            </p>
-          </div>
+  async function handleAuthenticated(userFromAuth: SessionUser | null) {
+    setUser(userFromAuth);
+    setAuthModalError(null);
+    setErrorMessage(null);
+    await loadSession(false);
+  }
 
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="rounded-full border border-[rgba(57,219,194,0.18)] bg-[rgba(57,219,194,0.09)] px-4 py-2 text-sm font-medium text-[rgba(177,245,232,0.92)]">
-              {sessionLoading ? "Loading memory..." : statusLabel(demoState, wakeState)}
+  return (
+    <div className="relative">
+      <div
+        className={authRequired ? "pointer-events-none select-none blur-[2px]" : ""}
+      >
+        <div className="grid gap-6 xl:grid-cols-[1.04fr_0.96fr]">
+          <section className="rounded-[2rem] border border-white/10 bg-[linear-gradient(180deg,rgba(9,16,27,0.92),rgba(5,12,22,0.96))] p-6 shadow-[0_28px_80px_rgba(2,8,17,0.34)] md:p-8">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <p className="text-xs uppercase tracking-[0.24em] text-white/42">
+                  Interactive demo
+                </p>
+                <h2 className="mt-3 text-3xl font-semibold tracking-[-0.05em] text-white md:text-4xl">
+                  {rovikCopy.demoTitle}
+                </h2>
+                <p className="mt-4 max-w-2xl text-base leading-7 text-white/62">
+                  {rovikCopy.demoDescription}
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="rounded-full border border-[rgba(57,219,194,0.18)] bg-[rgba(57,219,194,0.09)] px-4 py-2 text-sm font-medium text-[rgba(177,245,232,0.92)]">
+                  {sessionLoading
+                    ? "Loading memory..."
+                    : authRequired
+                      ? "Sign in required"
+                      : statusLabel(demoState, wakeState)}
+                </div>
+                {user?.isAuthenticated ? (
+                  <div className="inline-flex items-center justify-center rounded-full border border-white/10 bg-white/6 px-4 py-2 text-sm font-medium text-white/78">
+                    {user.email ?? user.displayName ?? "Signed in"}
+                  </div>
+                ) : null}
+                {user?.isAuthenticated ? (
+                  <button
+                    type="button"
+                    onClick={handleSignOut}
+                    disabled={authBusy}
+                    className="inline-flex items-center justify-center rounded-full border border-white/10 bg-white/6 px-4 py-2 text-sm font-medium text-white transition duration-200 hover:-translate-y-0.5 hover:bg-white/8 disabled:cursor-not-allowed disabled:opacity-45"
+                  >
+                    {authBusy ? "Signing out..." : "Sign out"}
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={handleNewConversation}
+                  disabled={
+                    sessionLoading || demoState === "processing" || authRequired
+                  }
+                  className="inline-flex items-center justify-center rounded-full border border-white/10 bg-white/6 px-4 py-2 text-sm font-medium text-white transition duration-200 hover:-translate-y-0.5 hover:bg-white/8 disabled:cursor-not-allowed disabled:opacity-45"
+                >
+                  New conversation
+                </button>
+              </div>
             </div>
-            {user?.isAuthenticated ? (
+
+            <div className="mt-8 grid gap-6 lg:grid-cols-[auto_1fr]">
+              <div className="flex flex-col items-center gap-4">
+                <RovikFace expression={expression} personality={personality} />
+                <MicButton
+                  state={demoState}
+                  disabled={
+                    demoState === "processing" ||
+                    !speechSupported ||
+                    sessionLoading ||
+                    authRequired
+                  }
+                  onClick={handleMicClick}
+                />
+                <button
+                  type="button"
+                  onClick={handleWakeToggle}
+                  disabled={
+                    !speechSupported ||
+                    demoState === "processing" ||
+                    sessionLoading ||
+                    authRequired
+                  }
+                  className="inline-flex items-center justify-center rounded-full border border-[rgba(57,219,194,0.22)] bg-[rgba(57,219,194,0.08)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[rgba(177,245,232,0.92)] transition duration-200 hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-45"
+                >
+                  {wakeToggleLabel(wakeState, wakeModeEnabled, wakeSupported)}
+                </button>
+                <p className="max-w-40 text-center text-sm leading-6 text-white/52">
+                  {wakeDescription({
+                    speechSupported,
+                    wakeSupported,
+                    wakeState,
+                    wakeCompatibilityMessage:
+                      speechProfileRef.current.wakeCompatibilityMessage,
+                  })}
+                </p>
+              </div>
+
+              <TranscriptBox
+                value={transcript}
+                onChange={(event) => {
+                  const nextValue = event.target.value;
+                  setTranscript(nextValue);
+                  setMode(inferMode(nextValue));
+                  setSource("typed");
+                  setErrorMessage(null);
+                }}
+                state={demoState}
+                mode={mode}
+              />
+            </div>
+
+            <div className="mt-5 flex flex-wrap items-center justify-between gap-4">
+              <p className="max-w-2xl text-sm leading-6 text-white/48">
+                {DEMO_BROWSER_HINT}
+              </p>
               <button
                 type="button"
-                onClick={handleSignOut}
-                disabled={authBusy}
-                className="inline-flex items-center justify-center rounded-full border border-white/10 bg-white/6 px-4 py-2 text-sm font-medium text-white transition duration-200 hover:-translate-y-0.5 hover:bg-white/8 disabled:cursor-not-allowed disabled:opacity-45"
+                onClick={handleSubmit}
+                disabled={
+                  !transcript.trim() ||
+                  demoState === "processing" ||
+                  sessionLoading ||
+                  authRequired
+                }
+                className="inline-flex items-center justify-center rounded-full bg-[linear-gradient(135deg,#39dbc2_0%,#0f8a7b_100%)] px-5 py-3 text-sm font-semibold text-[#02121c] transition duration-200 hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-45"
               >
-                {authBusy ? "Signing out..." : "Sign out"}
+                {demoState === "processing" ? "Processing..." : "Send to Rovik"}
               </button>
-            ) : (
-              <a
-                href="/api/auth/google?next=/demo"
-                className="inline-flex items-center justify-center rounded-full border border-[rgba(57,219,194,0.22)] bg-[rgba(57,219,194,0.08)] px-4 py-2 text-sm font-medium text-[rgba(177,245,232,0.92)] transition duration-200 hover:-translate-y-0.5"
-              >
-                Continue with Google
-              </a>
-            )}
-            <button
-              type="button"
-              onClick={handleNewConversation}
-              disabled={sessionLoading || demoState === "processing"}
-              className="inline-flex items-center justify-center rounded-full border border-white/10 bg-white/6 px-4 py-2 text-sm font-medium text-white transition duration-200 hover:-translate-y-0.5 hover:bg-white/8 disabled:cursor-not-allowed disabled:opacity-45"
-            >
-              New conversation
-            </button>
-          </div>
-        </div>
-
-        <div className="mt-8 grid gap-6 lg:grid-cols-[auto_1fr]">
-          <div className="flex flex-col items-center gap-4">
-            <RovikFace expression={expression} personality={personality} />
-            <MicButton
-              state={demoState}
-              disabled={
-                demoState === "processing" || !speechSupported || sessionLoading
-              }
-              onClick={handleMicClick}
-            />
-            <button
-              type="button"
-              onClick={handleWakeToggle}
-              disabled={
-                !speechSupported ||
-                demoState === "processing" ||
-                sessionLoading
-              }
-              className="inline-flex items-center justify-center rounded-full border border-[rgba(57,219,194,0.22)] bg-[rgba(57,219,194,0.08)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[rgba(177,245,232,0.92)] transition duration-200 hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-45"
-            >
-              {wakeToggleLabel(wakeState, wakeModeEnabled, wakeSupported)}
-            </button>
-            <p className="max-w-40 text-center text-sm leading-6 text-white/52">
-              {wakeDescription({
-                speechSupported,
-                wakeSupported,
-                wakeState,
-                wakeCompatibilityMessage:
-                  speechProfileRef.current.wakeCompatibilityMessage,
-              })}
-            </p>
-          </div>
-
-          <TranscriptBox
-            value={transcript}
-            onChange={(event) => {
-              const nextValue = event.target.value;
-              setTranscript(nextValue);
-              setMode(inferMode(nextValue));
-              setSource("typed");
-              setErrorMessage(null);
-            }}
-            state={demoState}
-            mode={mode}
-          />
-        </div>
-
-        <div className="mt-5 flex flex-wrap items-center justify-between gap-4">
-          <p className="max-w-2xl text-sm leading-6 text-white/48">
-            {DEMO_BROWSER_HINT}
-          </p>
-          <button
-            type="button"
-            onClick={handleSubmit}
-            disabled={
-              !transcript.trim() ||
-              demoState === "processing" ||
-              sessionLoading
-            }
-            className="inline-flex items-center justify-center rounded-full bg-[linear-gradient(135deg,#39dbc2_0%,#0f8a7b_100%)] px-5 py-3 text-sm font-semibold text-[#02121c] transition duration-200 hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-45"
-          >
-            {demoState === "processing" ? "Processing..." : "Send to Rovik"}
-          </button>
-        </div>
-
-        <div className="mt-8">
-          <div className="mb-4 flex items-center justify-between gap-3">
-            <div>
-              <p className="text-xs uppercase tracking-[0.24em] text-white/42">
-                Rovik personality
-              </p>
-              <p className="mt-2 text-sm text-white/45">
-                Switch tone any time before sending the request.
-              </p>
             </div>
-          </div>
-          <PersonalitySelector
-            options={personalityOptions}
-            selected={personality}
-            onSelect={setPersonality}
-          />
-        </div>
 
-        <div className="mt-8">
-          <div className="mb-4 flex items-center justify-between gap-3">
-            <p className="text-xs uppercase tracking-[0.24em] text-white/42">
-              Example prompts
-            </p>
-            <p className="text-sm text-white/45">
-              Clicking a prompt fills the transcript without auto-submitting.
-            </p>
-          </div>
-          <ExamplePrompts prompts={demoPrompts} onSelect={handlePromptSelect} />
-        </div>
-      </section>
-
-      <section className="grid gap-6">
-        <ConversationPanel
-          messages={messages}
-          state={demoState}
-          errorMessage={errorMessage}
-          user={user}
-        />
-
-        <div className="rounded-[1.75rem] border border-white/10 bg-white/6 p-5 text-white">
-          <p className="text-xs uppercase tracking-[0.24em] text-white/42">
-            Demo flow
-          </p>
-          <div className="mt-4 grid gap-3">
-            {[
-              "Sign in with Google or stay in guest mode.",
-              "Start a conversation and ask a follow-up question naturally.",
-              "Rovik keeps the thread, rolling memory, and recent turns together.",
-              "Older context is compacted automatically before the model window overflows.",
-              "The conversation is autosaved and finalized after inactivity.",
-            ].map((step, index) => (
-              <div
-                key={step}
-                className="flex items-start gap-3 rounded-[1.1rem] border border-white/8 bg-white/4 px-4 py-3"
-              >
-                <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[rgba(57,219,194,0.14)] text-xs font-semibold text-[rgba(177,245,232,0.92)]">
-                  {index + 1}
-                </span>
-                <span className="text-sm leading-6 text-white/72">{step}</span>
+            <div className="mt-8">
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.24em] text-white/42">
+                    Rovik personality
+                  </p>
+                  <p className="mt-2 text-sm text-white/45">
+                    Switch tone any time before sending the request.
+                  </p>
+                </div>
               </div>
-            ))}
-          </div>
+              <PersonalitySelector
+                options={personalityOptions}
+                selected={personality}
+                onSelect={setPersonality}
+              />
+            </div>
+
+            <div className="mt-8">
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <p className="text-xs uppercase tracking-[0.24em] text-white/42">
+                  Example prompts
+                </p>
+                <p className="text-sm text-white/45">
+                  Clicking a prompt fills the transcript without auto-submitting.
+                </p>
+              </div>
+              <ExamplePrompts prompts={demoPrompts} onSelect={handlePromptSelect} />
+            </div>
+          </section>
+
+          <section className="grid gap-6">
+            <ConversationPanel
+              messages={messages}
+              state={demoState}
+              errorMessage={errorMessage}
+              user={user}
+            />
+
+            <div className="rounded-[1.75rem] border border-white/10 bg-white/6 p-5 text-white">
+              <p className="text-xs uppercase tracking-[0.24em] text-white/42">
+                Demo flow
+              </p>
+              <div className="mt-4 grid gap-3">
+                {[
+                  "Sign in before opening the live demo workspace.",
+                  "Start a conversation and ask a follow-up question naturally.",
+                  "Rovik keeps the thread, rolling memory, and recent turns together.",
+                  "Older context is compacted automatically before the model window overflows.",
+                  "The conversation is autosaved and finalized after inactivity.",
+                ].map((step, index) => (
+                  <div
+                    key={step}
+                    className="flex items-start gap-3 rounded-[1.1rem] border border-white/8 bg-white/4 px-4 py-3"
+                  >
+                    <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[rgba(57,219,194,0.14)] text-xs font-semibold text-[rgba(177,245,232,0.92)]">
+                      {index + 1}
+                    </span>
+                    <span className="text-sm leading-6 text-white/72">{step}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
         </div>
-      </section>
+      </div>
+
+      <AuthModal
+        open={authRequired}
+        initialError={authModalError}
+        onAuthenticated={handleAuthenticated}
+      />
     </div>
   );
 }
