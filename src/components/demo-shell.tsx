@@ -1,11 +1,6 @@
 "use client";
 
-import {
-  startTransition,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { startTransition, useEffect, useRef, useState } from "react";
 import {
   defaultPersonality,
   demoPrompts,
@@ -15,16 +10,19 @@ import {
 } from "@/lib/demo-content";
 import type {
   AskRovikResponse,
+  ConversationMessage,
+  ConversationSessionResponse,
   DemoMode,
   DemoState,
   ExamplePrompt,
   RovikExpression,
   RovikPersonality,
+  SessionUser,
 } from "@/lib/demo-types";
+import { ConversationPanel } from "@/components/conversation-panel";
 import { ExamplePrompts } from "@/components/example-prompts";
 import { MicButton } from "@/components/mic-button";
 import { PersonalitySelector } from "@/components/personality-selector";
-import { ResponseCard } from "@/components/response-card";
 import { RovikFace } from "@/components/rovik-face";
 import { TranscriptBox } from "@/components/transcript-box";
 
@@ -38,6 +36,7 @@ type SpeechProfile = {
 const inactivityMs = 2600;
 const wakeRestartMs = 700;
 const wakeAlertMs = 260;
+const idleFinalizeMs = 90_000;
 
 function getSpeechProfile() {
   if (typeof navigator === "undefined") {
@@ -132,14 +131,12 @@ function stripWakeWord(value: string) {
 function getExpressionState({
   demoState,
   wakeState,
-  transcript,
-  response,
+  messages,
   errorMessage,
 }: {
   demoState: DemoState;
   wakeState: WakeState;
-  transcript: string;
-  response: AskRovikResponse | null;
+  messages: ConversationMessage[];
   errorMessage: string | null;
 }): RovikExpression {
   if (errorMessage || demoState === "error") {
@@ -162,18 +159,25 @@ function getExpressionState({
     return "thinking";
   }
 
-  if (response && demoState === "ready") {
+  const lastAssistantMessage = [...messages]
+    .reverse()
+    .find((message) => message.role === "assistant");
+  const lastUserMessage = [...messages]
+    .reverse()
+    .find((message) => message.role === "user");
+
+  if (lastAssistantMessage && demoState === "ready") {
     if (
       /need more information|please provide|please clarify|let me know more/i.test(
-        response.summary,
+        lastAssistantMessage.content,
       )
     ) {
       return "confused";
     }
 
     if (
-      response.mode === "general" &&
-      transcript.trim().split(/\s+/).length <= 3
+      lastUserMessage &&
+      lastUserMessage.content.trim().split(/\s+/).length <= 3
     ) {
       return "speaking";
     }
@@ -195,15 +199,20 @@ export function DemoShell() {
   const [personality, setPersonality] =
     useState<RovikPersonality>(defaultPersonality);
   const [source, setSource] = useState<"voice" | "typed">("typed");
-  const [response, setResponse] = useState<AskRovikResponse | null>(null);
+  const [messages, setMessages] = useState<ConversationMessage[]>([]);
+  const [conversationId, setConversationId] = useState("");
+  const [user, setUser] = useState<SessionUser | null>(null);
+  const [sessionLoading, setSessionLoading] = useState(true);
+  const [authBusy, setAuthBusy] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const commandRecognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const wakeRecognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const inactivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wakeRestartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const finalizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const transcriptBaseRef = useRef("");
-  const responseRef = useRef<AskRovikResponse | null>(null);
+  const messagesRef = useRef<ConversationMessage[]>([]);
   const speechSupportedRef = useRef(true);
   const wakeSupportedRef = useRef(true);
   const demoStateRef = useRef<DemoState>("idle");
@@ -221,14 +230,13 @@ export function DemoShell() {
   const expression = getExpressionState({
     demoState,
     wakeState,
-    transcript,
-    response,
+    messages,
     errorMessage,
   });
 
   useEffect(() => {
-    responseRef.current = response;
-  }, [response]);
+    messagesRef.current = messages;
+  }, [messages]);
 
   useEffect(() => {
     speechSupportedRef.current = speechSupported;
@@ -266,9 +274,97 @@ export function DemoShell() {
     }
   }, []);
 
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const authError = new URLSearchParams(window.location.search).get("authError");
+
+    if (authError) {
+      setErrorMessage(authError);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadSession();
+  }, []);
+
+  useEffect(() => {
+    if (finalizeTimerRef.current) {
+      clearTimeout(finalizeTimerRef.current);
+    }
+
+    if (
+      sessionLoading ||
+      !conversationId ||
+      !messages.length ||
+      demoState === "processing"
+    ) {
+      return;
+    }
+
+    finalizeTimerRef.current = setTimeout(() => {
+      void fetch("/api/conversation/finalize", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          conversationId,
+        }),
+      }).catch(() => {
+        // Idle finalization is best-effort.
+      });
+    }, idleFinalizeMs);
+
+    return () => {
+      if (finalizeTimerRef.current) {
+        clearTimeout(finalizeTimerRef.current);
+      }
+    };
+  }, [conversationId, demoState, messages, sessionLoading]);
+
   function setDemoStateValue(next: DemoState) {
     demoStateRef.current = next;
     setDemoState(next);
+  }
+
+  async function loadSession(reset = false) {
+    setSessionLoading(true);
+
+    try {
+      const response = await fetch(
+        `/api/conversation/session${reset ? "?reset=1" : ""}`,
+        {
+          cache: "no-store",
+        },
+      );
+
+      const payload = (await response.json()) as ConversationSessionResponse;
+
+      if (!response.ok) {
+        throw new Error("Could not load the conversation session.");
+      }
+
+      setConversationId(payload.conversationId);
+      setMessages(payload.messages ?? []);
+      setUser(payload.user);
+
+      if (reset) {
+        setTranscript("");
+        setMode("planning");
+        setSource("typed");
+      }
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "Could not load the conversation session.",
+      );
+    } finally {
+      setSessionLoading(false);
+    }
   }
 
   function clearInactivityTimer() {
@@ -425,7 +521,7 @@ export function DemoShell() {
         wakeModeEnabledRef.current = false;
         setWakeModeEnabled(false);
         setWakeState("off");
-        setDemoStateValue(responseRef.current ? "ready" : "idle");
+        setDemoStateValue(messagesRef.current.length ? "ready" : "idle");
         setErrorMessage(null);
         return;
       }
@@ -439,13 +535,13 @@ export function DemoShell() {
         wakeModeEnabledRef.current = false;
         setWakeModeEnabled(false);
         setWakeState("off");
-        setDemoStateValue(responseRef.current ? "ready" : "idle");
+        setDemoStateValue(messagesRef.current.length ? "ready" : "idle");
         setErrorMessage(null);
         return;
       }
 
       setWakeState("off");
-      setDemoStateValue(responseRef.current ? "ready" : "idle");
+      setDemoStateValue(messagesRef.current.length ? "ready" : "idle");
       setErrorMessage(null);
     };
 
@@ -515,7 +611,7 @@ export function DemoShell() {
       wakeModeEnabledRef.current = false;
       setWakeModeEnabled(false);
       setWakeState("off");
-      setDemoStateValue(responseRef.current ? "ready" : "idle");
+      setDemoStateValue(messagesRef.current.length ? "ready" : "idle");
       setErrorMessage(null);
     }
   }
@@ -621,7 +717,7 @@ export function DemoShell() {
         clearInactivityTimer();
         commandRecognitionRef.current = null;
         commandLaunchPendingRef.current = false;
-        setDemoStateValue(responseRef.current ? "ready" : "idle");
+        setDemoStateValue(messagesRef.current.length ? "ready" : "idle");
         setErrorMessage(null);
 
         if (wakeModeEnabledRef.current && wakeSupportedRef.current) {
@@ -686,7 +782,7 @@ export function DemoShell() {
             ? current
             : !speechSupportedRef.current
               ? "unsupported"
-              : responseRef.current
+              : messagesRef.current.length
                 ? "ready"
                 : "idle";
 
@@ -707,6 +803,7 @@ export function DemoShell() {
     setErrorMessage(null);
     setDemoStateValue("listening");
     setSource("voice");
+
     try {
       recognition.start();
     } catch {
@@ -718,6 +815,7 @@ export function DemoShell() {
       );
       return;
     }
+
     resetInactivityTimer();
     commandLaunchPendingRef.current = false;
   }
@@ -730,6 +828,10 @@ export function DemoShell() {
 
       if (wakeRestartTimerRef.current) {
         clearTimeout(wakeRestartTimerRef.current);
+      }
+
+      if (finalizeTimerRef.current) {
+        clearTimeout(finalizeTimerRef.current);
       }
 
       commandRecognitionRef.current?.abort();
@@ -762,7 +864,7 @@ export function DemoShell() {
 
     if (!wakeSupportedRef.current) {
       setWakeState("off");
-      setDemoStateValue(responseRef.current ? "ready" : "idle");
+      setDemoStateValue(messagesRef.current.length ? "ready" : "idle");
       setErrorMessage(null);
       return;
     }
@@ -804,6 +906,7 @@ export function DemoShell() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
+          conversationId,
           transcript: trimmed,
           mode: requestMode,
           personality,
@@ -824,9 +927,12 @@ export function DemoShell() {
       }
 
       startTransition(() => {
-        setResponse(payload);
+        setMessages(payload.messages);
       });
+      setConversationId(payload.conversationId);
       setMode(payload.mode);
+      setTranscript("");
+      setSource("typed");
       setDemoStateValue("ready");
 
       if (wakeModeEnabledRef.current) {
@@ -860,13 +966,35 @@ export function DemoShell() {
       return;
     }
 
-    setDemoStateValue(response ? "ready" : "idle");
+    setDemoStateValue(messages.length ? "ready" : "idle");
+  }
+
+  async function handleNewConversation() {
+    setErrorMessage(null);
+    await loadSession(true);
+    setDemoStateValue("idle");
+  }
+
+  async function handleSignOut() {
+    setAuthBusy(true);
+
+    try {
+      await fetch("/api/auth/sign-out", {
+        method: "POST",
+      });
+      setUser(null);
+      await loadSession(false);
+    } catch {
+      setErrorMessage("Sign-out failed. Refresh the page and try again.");
+    } finally {
+      setAuthBusy(false);
+    }
   }
 
   return (
     <div className="grid gap-6 xl:grid-cols-[1.04fr_0.96fr]">
       <section className="rounded-[2rem] border border-white/10 bg-[linear-gradient(180deg,rgba(9,16,27,0.92),rgba(5,12,22,0.96))] p-6 shadow-[0_28px_80px_rgba(2,8,17,0.34)] md:p-8">
-        <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <p className="text-xs uppercase tracking-[0.24em] text-white/42">
               Interactive demo
@@ -879,8 +1007,35 @@ export function DemoShell() {
             </p>
           </div>
 
-          <div className="rounded-full border border-[rgba(57,219,194,0.18)] bg-[rgba(57,219,194,0.09)] px-4 py-2 text-sm font-medium text-[rgba(177,245,232,0.92)]">
-            {statusLabel(demoState, wakeState)}
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="rounded-full border border-[rgba(57,219,194,0.18)] bg-[rgba(57,219,194,0.09)] px-4 py-2 text-sm font-medium text-[rgba(177,245,232,0.92)]">
+              {sessionLoading ? "Loading memory..." : statusLabel(demoState, wakeState)}
+            </div>
+            {user?.isAuthenticated ? (
+              <button
+                type="button"
+                onClick={handleSignOut}
+                disabled={authBusy}
+                className="inline-flex items-center justify-center rounded-full border border-white/10 bg-white/6 px-4 py-2 text-sm font-medium text-white transition duration-200 hover:-translate-y-0.5 hover:bg-white/8 disabled:cursor-not-allowed disabled:opacity-45"
+              >
+                {authBusy ? "Signing out..." : "Sign out"}
+              </button>
+            ) : (
+              <a
+                href="/api/auth/google?next=/demo"
+                className="inline-flex items-center justify-center rounded-full border border-[rgba(57,219,194,0.22)] bg-[rgba(57,219,194,0.08)] px-4 py-2 text-sm font-medium text-[rgba(177,245,232,0.92)] transition duration-200 hover:-translate-y-0.5"
+              >
+                Continue with Google
+              </a>
+            )}
+            <button
+              type="button"
+              onClick={handleNewConversation}
+              disabled={sessionLoading || demoState === "processing"}
+              className="inline-flex items-center justify-center rounded-full border border-white/10 bg-white/6 px-4 py-2 text-sm font-medium text-white transition duration-200 hover:-translate-y-0.5 hover:bg-white/8 disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              New conversation
+            </button>
           </div>
         </div>
 
@@ -889,13 +1044,19 @@ export function DemoShell() {
             <RovikFace expression={expression} personality={personality} />
             <MicButton
               state={demoState}
-              disabled={demoState === "processing" || !speechSupported}
+              disabled={
+                demoState === "processing" || !speechSupported || sessionLoading
+              }
               onClick={handleMicClick}
             />
             <button
               type="button"
               onClick={handleWakeToggle}
-              disabled={!speechSupported || demoState === "processing"}
+              disabled={
+                !speechSupported ||
+                demoState === "processing" ||
+                sessionLoading
+              }
               className="inline-flex items-center justify-center rounded-full border border-[rgba(57,219,194,0.22)] bg-[rgba(57,219,194,0.08)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[rgba(177,245,232,0.92)] transition duration-200 hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-45"
             >
               {wakeToggleLabel(wakeState, wakeModeEnabled, wakeSupported)}
@@ -932,7 +1093,11 @@ export function DemoShell() {
           <button
             type="button"
             onClick={handleSubmit}
-            disabled={!transcript.trim() || demoState === "processing"}
+            disabled={
+              !transcript.trim() ||
+              demoState === "processing" ||
+              sessionLoading
+            }
             className="inline-flex items-center justify-center rounded-full bg-[linear-gradient(135deg,#39dbc2_0%,#0f8a7b_100%)] px-5 py-3 text-sm font-semibold text-[#02121c] transition duration-200 hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-45"
           >
             {demoState === "processing" ? "Processing..." : "Send to Rovik"}
@@ -971,10 +1136,11 @@ export function DemoShell() {
       </section>
 
       <section className="grid gap-6">
-        <ResponseCard
-          response={response}
+        <ConversationPanel
+          messages={messages}
           state={demoState}
           errorMessage={errorMessage}
+          user={user}
         />
 
         <div className="rounded-[1.75rem] border border-white/10 bg-white/6 p-5 text-white">
@@ -983,11 +1149,11 @@ export function DemoShell() {
           </p>
           <div className="mt-4 grid gap-3">
             {[
-              "Arm wake mode once or use the mic button.",
-              "Say “Rovik” or “Hey Rovik.”",
-              "Rovik switches from standby to command listening.",
-              "Review the transcript.",
-              "Send the request to Rovik AI.",
+              "Sign in with Google or stay in guest mode.",
+              "Start a conversation and ask a follow-up question naturally.",
+              "Rovik keeps the thread, rolling memory, and recent turns together.",
+              "Older context is compacted automatically before the model window overflows.",
+              "The conversation is autosaved and finalized after inactivity.",
             ].map((step, index) => (
               <div
                 key={step}
@@ -1028,7 +1194,7 @@ function statusLabel(state: DemoState, wakeState: WakeState) {
   }
 
   if (state === "ready") {
-    return "Response ready";
+    return "Conversation ready";
   }
 
   if (state === "unsupported") {

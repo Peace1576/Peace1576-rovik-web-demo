@@ -26,6 +26,7 @@ export type RovikExpression =
   | "error";
 
 export type AskRovikRequest = {
+  conversationId?: string;
   transcript: string;
   mode: DemoMode;
   personality: RovikPersonality;
@@ -33,12 +34,73 @@ export type AskRovikRequest = {
 };
 
 export type AskRovikResponse = {
+  conversationId: string;
   summary: string;
   recommendedAction: string;
   draft?: string;
   nextSteps?: string[];
   actionSuggestions?: string[];
   mode: DemoMode;
+  userMessage: ConversationMessage;
+  assistantMessage: ConversationMessage;
+  messages: ConversationMessage[];
+  conversationSummary?: ConversationSummary;
+  userMemory?: UserMemoryProfile;
+};
+
+export type ConversationRole = "user" | "assistant";
+
+export type ConversationMessage = {
+  id: string;
+  role: ConversationRole;
+  content: string;
+  createdAt: string;
+  mode: DemoMode;
+  personality?: RovikPersonality;
+};
+
+export type ConversationSummary = {
+  snapshot: string;
+  firstUserMessage?: string;
+  keyFacts?: string[];
+  preferences?: string[];
+  openLoops?: string[];
+  updatedAt: string;
+  compactedThroughMessageId?: string;
+};
+
+export type UserMemoryProfile = {
+  summary: string;
+  facts?: string[];
+  preferences?: string[];
+  goals?: string[];
+  updatedAt: string;
+};
+
+export type ConversationRecord = {
+  conversationId: string;
+  ownerKey: string;
+  title: string;
+  messages: ConversationMessage[];
+  summary?: ConversationSummary;
+  lastActiveAt: string;
+  archivedAt?: string;
+};
+
+export type SessionUser = {
+  id: string;
+  email: string | null;
+  displayName: string | null;
+  avatarUrl?: string | null;
+  isAuthenticated: boolean;
+};
+
+export type ConversationSessionResponse = {
+  conversationId: string;
+  messages: ConversationMessage[];
+  conversationSummary?: ConversationSummary;
+  userMemory?: UserMemoryProfile;
+  user: SessionUser | null;
 };
 
 export type ExamplePrompt = {

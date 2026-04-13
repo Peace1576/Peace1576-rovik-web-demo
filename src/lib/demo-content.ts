@@ -44,9 +44,9 @@ export const landingCards: LandingCard[] = [
       "Click the mic, speak a command, and watch the transcript populate in real time.",
   },
   {
-    title: "Structured assistant output",
+    title: "Persistent conversation memory",
     description:
-      "Rovik returns a concise summary, a recommended action, and optional next steps or drafts.",
+      "Follow-up questions stay connected because Rovik keeps the thread, rolling summary, and saved context together.",
   },
   {
     title: "Focused demo modes",
@@ -58,7 +58,7 @@ export const landingCards: LandingCard[] = [
 export const landingMetrics: LandingMetric[] = [
   { label: "Primary route", value: "/demo" },
   { label: "Voice input", value: "Web Speech API" },
-  { label: "AI engine", value: "Rovik inference" },
+  { label: "Memory", value: "Persistent thread" },
 ];
 
 export const landingUseCases = [
@@ -109,8 +109,8 @@ export const rovikCopy = {
   name: "ROVIK",
   tagline: "Simply forward.",
   pitch:
-    "A voice-first demo for Rovik, the proactive AI assistant that turns spoken requests into clear, action-oriented responses.",
-  demoTitle: "Speak a task. Edit the transcript. Send it to Rovik.",
+    "A voice-first demo for Rovik, the proactive AI assistant that keeps conversation context, remembers follow-ups, and turns spoken requests into useful action.",
+  demoTitle: "Speak a task. Keep the thread. Talk to Rovik.",
   demoDescription:
-    "This version is intentionally narrow: capture a command, keep the transcript editable, and return a structured answer that feels like an assistant instead of a chatbot.",
+    "This version keeps the transcript editable, preserves follow-up context, compacts older turns automatically, and saves conversation memory for later use.",
 };

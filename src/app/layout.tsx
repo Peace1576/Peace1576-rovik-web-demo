@@ -21,20 +21,20 @@ const monoFont = IBM_Plex_Mono({
 export const metadata: Metadata = {
   title: "Rovik | Voice web demo",
   description:
-    "Voice-first web demo for Rovik with browser speech recognition, editable transcript input, and structured Gemini responses.",
+    "Voice-first web demo for Rovik with browser speech recognition, multi-turn memory, and persistent conversation context.",
   metadataBase: new URL("https://rovik-demo-page.vercel.app"),
   keywords: [
     "Rovik",
     "voice demo",
     "speech recognition",
-    "Gemini",
+    "conversation memory",
     "AI assistant",
     "Next.js demo",
   ],
   openGraph: {
     title: "Rovik | Voice web demo",
     description:
-      "Speak a task, edit the transcript, and send it to Rovik for a structured Gemini response.",
+      "Speak a task, keep the thread alive, and let Rovik answer with persistent conversation context.",
     type: "website",
   },
   twitter: {
