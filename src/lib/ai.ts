@@ -31,14 +31,25 @@ export class RovikServiceError extends Error {
   }
 }
 
+function readEnv(...names: string[]) {
+  for (const name of names) {
+    const value = process.env[name]?.trim();
+
+    if (value) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
 const apiUrl =
-  process.env.GROQ_API_URL ||
-  process.env.AI_API_URL ||
+  readEnv("GROQ_API_URL", "AI_API_URL") ||
   "https://api.groq.com/openai/v1/chat/completions";
 
-const apiKey = process.env.GROQ_API_KEY || process.env.AI_API_KEY;
+const apiKey = readEnv("GROQ_API_KEY", "AI_API_KEY");
 const model =
-  process.env.GROQ_MODEL || process.env.AI_MODEL || "llama-3.3-70b-versatile";
+  readEnv("GROQ_MODEL", "AI_MODEL") || "llama-3.3-70b-versatile";
 
 const systemInstruction = [
   "You are Rovik, a proactive AI assistant.",
