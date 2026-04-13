@@ -1,4 +1,3 @@
-import { GoogleGenAI } from "@google/genai";
 import type {
   AskRovikRequest,
   AskRovikResponse,
@@ -6,231 +5,290 @@ import type {
   RovikPersonality,
 } from "@/lib/demo-types";
 
-const DEFAULT_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+type ProviderErrorPayload = {
+  error?: {
+    code?: number | string;
+    message?: string;
+    type?: string;
+  };
+};
+
+type ChatCompletionPayload = {
+  choices?: Array<{
+    message?: {
+      content?: string | Array<{ type?: string; text?: string }>;
+    };
+  }>;
+};
 
 export class RovikServiceError extends Error {
-  statusCode: number;
-
-  constructor(message: string, statusCode = 500) {
+  constructor(
+    message: string,
+    readonly statusCode: number,
+  ) {
     super(message);
     this.name = "RovikServiceError";
-    this.statusCode = statusCode;
   }
 }
 
-const systemInstruction = `You are Rovik, a proactive AI assistant.
-You help users manage tasks, research information, draft responses, and plan actions.
-Be clear, concise, and action-oriented.
-Return valid JSON only with this exact shape:
-{
-  "summary": string,
-  "recommendedAction": string,
-  "draft": string | undefined,
-  "nextSteps": string[] | undefined,
-  "actionSuggestions": string[] | undefined,
-  "mode": "email" | "planning" | "research" | "general"
-}
-Rules:
-- Always include summary, recommendedAction, and mode.
-- Write summary as the direct response shown to the user. Do not describe the user's prompt from a third-person perspective.
-- For greetings or simple conversational input, answer naturally and briefly as Rovik.
-- Use short arrays for nextSteps and actionSuggestions when helpful.
-- Include draft only when the request would benefit from wording the user can reuse.
-- Do not wrap JSON in markdown fences.
-- Match the requested mode unless the request is obviously better treated as "general".
-- Match the requested personality in tone, pacing, and wording.`;
+const apiUrl =
+  process.env.GROQ_API_URL ||
+  process.env.AI_API_URL ||
+  "https://api.groq.com/openai/v1/chat/completions";
 
-function getApiKey() {
-  return process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY;
-}
+const apiKey = process.env.GROQ_API_KEY || process.env.AI_API_KEY;
+const model =
+  process.env.GROQ_MODEL || process.env.AI_MODEL || "llama-3.3-70b-versatile";
+
+const systemInstruction = [
+  "You are Rovik, a proactive AI assistant.",
+  "Your job is to help with tasks, planning, drafting, and research in a direct, useful way.",
+  "Never mention the underlying AI provider, API, or model.",
+  "For simple greetings or short conversational prompts, answer naturally instead of describing the user's intent.",
+  "If the request is unclear, ask a short clarifying question.",
+  "Return JSON only.",
+  "Use exactly this shape:",
+  '{',
+  '  "summary": "Primary user-facing answer text.",',
+  '  "recommendedAction": "One concrete next action.",',
+  '  "draft": "Optional longer answer or draft. Omit when unnecessary.",',
+  '  "nextSteps": ["Optional next step", "Optional next step"],',
+  '  "actionSuggestions": ["Optional action", "Optional action"],',
+  '  "mode": "email | planning | research | general"',
+  '}',
+  "Do not wrap the JSON in markdown fences.",
+].join(" ");
 
 function buildModeInstruction(mode: DemoMode) {
-  if (mode === "email") {
-    return "Focus on email clarity, priorities, and usable reply language.";
+  switch (mode) {
+    case "email":
+      return "Focus on inbox help, summaries, reply drafts, and clear message handling.";
+    case "planning":
+      return "Focus on scheduling, priorities, sequencing, and a realistic plan.";
+    case "research":
+      return "Focus on comparison, tradeoffs, reasoning, and concise synthesis.";
+    default:
+      return "Handle the request like a general assistant while staying action-oriented.";
   }
-
-  if (mode === "planning") {
-    return "Focus on prioritization, sequencing, and a practical schedule.";
-  }
-
-  if (mode === "research") {
-    return "Focus on comparison, recommendation quality, and concise tradeoffs.";
-  }
-
-  return "Handle the request as a general proactive assistant task.";
 }
 
 function buildPersonalityInstruction(personality: RovikPersonality) {
-  if (personality === "professional") {
-    return [
-      "Professional mode.",
-      "Be clear, calm, efficient, and business-like.",
-      "Prefer structured, concise wording.",
-      "Avoid casual filler.",
-    ].join(" ");
+  switch (personality) {
+    case "friendly":
+      return "Tone: warm, conversational, and encouraging. Keep the wording simple.";
+    case "minimalist":
+      return "Tone: extremely concise. Use only the essential information and avoid extra commentary.";
+    case "coach":
+      return "Tone: motivating and helpful. Push toward action and momentum.";
+    case "researcher":
+      return "Tone: analytical and informative. Favor structured comparisons and reasoning.";
+    default:
+      return "Tone: professional, clear, calm, and efficient.";
   }
-
-  if (personality === "friendly") {
-    return [
-      "Friendly mode.",
-      "Be warm, conversational, and easy to follow.",
-      "Use encouraging language without sounding informal to the point of being sloppy.",
-    ].join(" ");
-  }
-
-  if (personality === "minimalist") {
-    return [
-      "Minimalist mode.",
-      "Keep the response extremely concise.",
-      "Use only the key information needed to move the user forward.",
-      "Avoid extra commentary.",
-    ].join(" ");
-  }
-
-  if (personality === "coach") {
-    return [
-      "Coach mode.",
-      "Be motivating, helpful, and action-oriented.",
-      "Encourage progress and suggest the next productive move.",
-    ].join(" ");
-  }
-
-  return [
-    "Researcher mode.",
-    "Be analytical, informative, and structured.",
-    "Explain tradeoffs clearly and favor precise comparisons.",
-  ].join(" ");
 }
 
-function extractJson(text: string) {
-  const trimmed = text.trim();
+function extractJson(value: string) {
+  const trimmed = value.trim();
 
   if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
     return trimmed;
   }
 
-  const firstBrace = trimmed.indexOf("{");
-  const lastBrace = trimmed.lastIndexOf("}");
-
-  if (firstBrace >= 0 && lastBrace > firstBrace) {
-    return trimmed.slice(firstBrace, lastBrace + 1);
-  }
-
-  throw new Error("Gemini returned a non-JSON response.");
+  const match = trimmed.match(/\{[\s\S]*\}/);
+  return match ? match[0] : trimmed;
 }
 
-function normalizeProviderError(error: unknown) {
-  const message = error instanceof Error ? error.message : String(error);
+function extractMessageContent(
+  payload: ChatCompletionPayload,
+) {
+  const content = payload.choices?.[0]?.message?.content;
 
-  if (/503|UNAVAILABLE|overloaded|high demand/i.test(message)) {
+  if (typeof content === "string") {
+    return content;
+  }
+
+  if (Array.isArray(content)) {
+    return content
+      .map((item) => item.text ?? "")
+      .join("")
+      .trim();
+  }
+
+  return "";
+}
+
+function normalizeArray(value: unknown) {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const items = value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  return items.length ? items : undefined;
+}
+
+function normalizeMode(value: unknown): DemoMode {
+  if (
+    value === "email" ||
+    value === "planning" ||
+    value === "research" ||
+    value === "general"
+  ) {
+    return value;
+  }
+
+  return "general";
+}
+
+function normalizeResponse(value: unknown): AskRovikResponse {
+  if (!value || typeof value !== "object") {
+    throw new RovikServiceError(
+      "Rovik returned an unreadable response. Please try again.",
+      502,
+    );
+  }
+
+  const candidate = value as Record<string, unknown>;
+  const summary =
+    typeof candidate.summary === "string" && candidate.summary.trim()
+      ? candidate.summary.trim()
+      : typeof candidate.draft === "string" && candidate.draft.trim()
+        ? candidate.draft.trim()
+        : "";
+
+  if (!summary) {
+    throw new RovikServiceError(
+      "Rovik returned an empty response. Please try again.",
+      502,
+    );
+  }
+
+  const recommendedAction =
+    typeof candidate.recommendedAction === "string" &&
+    candidate.recommendedAction.trim()
+      ? candidate.recommendedAction.trim()
+      : "Review the response and continue with the next step.";
+
+  const draft =
+    typeof candidate.draft === "string" && candidate.draft.trim()
+      ? candidate.draft.trim()
+      : undefined;
+
+  return {
+    summary,
+    recommendedAction,
+    draft,
+    nextSteps: normalizeArray(candidate.nextSteps),
+    actionSuggestions: normalizeArray(candidate.actionSuggestions),
+    mode: normalizeMode(candidate.mode),
+  };
+}
+
+async function parseProviderError(response: Response) {
+  let payload: ProviderErrorPayload | null = null;
+
+  try {
+    payload = (await response.json()) as ProviderErrorPayload;
+  } catch {
+    payload = null;
+  }
+
+  const providerMessage = payload?.error?.message?.trim();
+
+  if (response.status === 401 || response.status === 403) {
+    return new RovikServiceError(
+      "Rovik is not configured correctly right now. Check the server API key.",
+      500,
+    );
+  }
+
+  if (response.status === 429 || response.status === 503) {
     return new RovikServiceError(
       "Rovik is temporarily busy right now. Please try again in a moment.",
       503,
     );
   }
 
-  if (/429|RESOURCE_EXHAUSTED|quota|rate limit/i.test(message)) {
-    return new RovikServiceError(
-      "Rovik is handling too many requests right now. Please try again shortly.",
-      429,
-    );
-  }
-
-  if (/API key|credential|permission/i.test(message)) {
-    return new RovikServiceError(
-      "The AI service is not configured correctly right now.",
-      500,
-    );
-  }
-
   return new RovikServiceError(
-    "Rovik hit a temporary issue while generating a response. Please try again.",
-    500,
+    providerMessage || "Rovik could not complete the request.",
+    response.status || 500,
   );
 }
 
-function normalizeResponse(
-  payload: Partial<AskRovikResponse>,
-  fallbackMode: DemoMode,
-): AskRovikResponse {
-  const mode = payload.mode ?? fallbackMode;
-
-  return {
-    summary: typeof payload.summary === "string" ? payload.summary.trim() : "",
-    recommendedAction:
-      typeof payload.recommendedAction === "string"
-        ? payload.recommendedAction.trim()
-        : "",
-    draft: typeof payload.draft === "string" ? payload.draft.trim() : undefined,
-    nextSteps: Array.isArray(payload.nextSteps)
-      ? payload.nextSteps
-          .filter((step): step is string => typeof step === "string")
-          .map((step) => step.trim())
-          .filter(Boolean)
-      : undefined,
-    actionSuggestions: Array.isArray(payload.actionSuggestions)
-      ? payload.actionSuggestions
-          .filter((step): step is string => typeof step === "string")
-          .map((step) => step.trim())
-          .filter(Boolean)
-      : undefined,
-    mode,
-  };
-}
-
-export async function askRovik(
-  input: AskRovikRequest,
-): Promise<AskRovikResponse> {
-  const apiKey = getApiKey();
-
+export async function askRovik({
+  transcript,
+  mode,
+  personality,
+  source,
+}: AskRovikRequest): Promise<AskRovikResponse> {
   if (!apiKey) {
     throw new RovikServiceError(
-      "Missing Gemini API key. Set GOOGLE_API_KEY or GEMINI_API_KEY.",
+      "Missing Groq API key. Set GROQ_API_KEY or AI_API_KEY.",
       500,
     );
   }
 
-  try {
-    const ai = new GoogleGenAI({ apiKey });
+  const userInstruction = [
+    `Mode: ${mode}`,
+    `Personality: ${personality}`,
+    `Source: ${source}`,
+    buildModeInstruction(mode),
+    buildPersonalityInstruction(personality),
+    `User request: ${transcript}`,
+  ].join("\n");
 
-    const response = await ai.models.generateContent({
-      model: DEFAULT_MODEL,
-      contents: [
+  const response = await fetch(apiUrl, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      temperature: 0.45,
+      response_format: {
+        type: "json_object",
+      },
+      messages: [
+        {
+          role: "system",
+          content: systemInstruction,
+        },
         {
           role: "user",
-          parts: [
-            {
-              text: [
-                `Mode: ${input.mode}`,
-                `Personality: ${input.personality}`,
-                `Input source: ${input.source}`,
-                buildModeInstruction(input.mode),
-                buildPersonalityInstruction(input.personality),
-                "",
-                "User transcript:",
-                input.transcript.trim(),
-              ].join("\n"),
-            },
-          ],
+          content: userInstruction,
         },
       ],
-      config: {
-        systemInstruction,
-        temperature: 0.6,
-        responseMimeType: "application/json",
-      },
-    });
+    }),
+  });
 
-    const rawText = response.text ?? "";
-    const parsed = JSON.parse(extractJson(rawText)) as Partial<AskRovikResponse>;
-    const normalized = normalizeResponse(parsed, input.mode);
-
-    if (!normalized.summary || !normalized.recommendedAction) {
-      throw new Error("Gemini response was missing required fields.");
-    }
-
-    return normalized;
-  } catch (error) {
-    throw normalizeProviderError(error);
+  if (!response.ok) {
+    throw await parseProviderError(response);
   }
+
+  const payload = (await response.json()) as ChatCompletionPayload;
+  const content = extractMessageContent(payload);
+
+  if (!content) {
+    throw new RovikServiceError(
+      "Rovik returned an empty response. Please try again.",
+      502,
+    );
+  }
+
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(extractJson(content));
+  } catch {
+    throw new RovikServiceError(
+      "Rovik returned an unreadable response. Please try again.",
+      502,
+    );
+  }
+
+  return normalizeResponse(parsed);
 }

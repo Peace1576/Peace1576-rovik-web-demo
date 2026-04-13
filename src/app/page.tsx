@@ -138,7 +138,7 @@ export default function Home() {
                 </p>
                 <p className="mt-3 text-base leading-7 text-white/72">
                   User says: &quot;Rovik, plan my day tomorrow.&quot; The transcript
-                  appears, stays editable, then Gemini returns a schedule, top
+                  appears, stays editable, then Rovik returns a schedule, top
                   priorities, and recommended next actions.
                 </p>
               </div>

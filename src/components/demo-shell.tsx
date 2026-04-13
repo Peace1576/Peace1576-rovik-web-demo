@@ -987,7 +987,7 @@ export function DemoShell() {
               "Say “Rovik” or “Hey Rovik.”",
               "Rovik switches from standby to command listening.",
               "Review the transcript.",
-              "Send the request to Gemini.",
+              "Send the request to Rovik AI.",
             ].map((step, index) => (
               <div
                 key={step}

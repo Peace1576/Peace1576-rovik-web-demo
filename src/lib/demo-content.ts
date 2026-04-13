@@ -58,7 +58,7 @@ export const landingCards: LandingCard[] = [
 export const landingMetrics: LandingMetric[] = [
   { label: "Primary route", value: "/demo" },
   { label: "Voice input", value: "Web Speech API" },
-  { label: "AI engine", value: "Gemini 2.5 Flash" },
+  { label: "AI engine", value: "Rovik inference" },
 ];
 
 export const landingUseCases = [
